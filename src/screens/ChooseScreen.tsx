@@ -46,30 +46,16 @@ export function ChooseScreen() {
     <AppShell>
       <View style={styles.hero}>
         <NobtiLogo size={44} showWordmark whiteMode />
-        <Text style={styles.heroSub}>Choisissez votre accès</Text>
+        <Text style={styles.heroSub}>Accès établissement</Text>
       </View>
 
       <View style={{ gap: 12 }}>
-        <AccessCard
-          label="Accès Visiteur"
-          sub="Trouver un établissement · Prendre votre tour"
-          color="green"
-          icon="users"
-          onPress={() => router.push('/visitor/auth')}
-        />
         <AccessCard
           label="Accès Établissement"
           sub="Gérer vos files · Tableau de bord"
           color="blue"
           icon="grid"
           onPress={() => router.push('/establishment/auth')}
-        />
-        <AccessCard
-          label="Scanner un QR code"
-          sub="Rejoignez une file directement sur place"
-          color="white"
-          icon="maximize"
-          onPress={() => router.push('/visitor/scan')}
         />
       </View>
     </AppShell>

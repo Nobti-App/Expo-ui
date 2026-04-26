@@ -1,3 +1,3 @@
-import { SplashScreen } from '@/src/screens/SplashScreen';
+import { EstabAuthScreen } from '@/src/screens/EstabAuthScreen';
 
-export default SplashScreen;
+export default EstabAuthScreen;

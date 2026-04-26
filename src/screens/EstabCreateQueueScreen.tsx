@@ -10,7 +10,6 @@ import { supabase } from '@/src/lib/supabase';
 import { useAppState } from '@/src/state/AppContext';
 import { colors, radius } from '@/src/theme/colors';
 
-const PREFIXES = ['A', 'B', 'C'];
 
 function parseMaxTickets(value: string) {
   if (!value.trim()) return null;
@@ -25,7 +24,7 @@ export function EstabCreateQueueScreen() {
   const [queues, setQueues] = useState<QueueEntity[]>([]);
   const [establishmentId, setEstablishmentId] = useState('');
   const [name, setName] = useState('');
-  const [prefix, setPrefix] = useState('A');
+  const [prefix, setPrefix] = useState('');
   const [maxTickets, setMaxTickets] = useState('');
   const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
   const [visibleQrQueueId, setVisibleQrQueueId] = useState<string | null>(null);
@@ -166,9 +165,16 @@ export function EstabCreateQueueScreen() {
 
         <Text style={[styles.label, { marginTop: 10 }]}>Préfixe ticket (A/B/C)</Text>
         <View style={styles.prefixRow}>
-          {PREFIXES.map((k) => (
-            <PrimaryButton key={k} label={k} style={{ flex: 1 }} variant={prefix === k ? 'green' : 'gray'} onPress={() => setPrefix(k)} />
-          ))}
+          {/* /// input to choose the ticket prefix. max 2 characters.  */}
+          <TextInput
+            value={prefix}
+            onChangeText={(text) => setPrefix(text.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))}
+            maxLength={2}
+            style={[styles.input, { flex: 1 }]}
+            placeholder="Ex : A"
+            autoCapitalize="characters"
+            // allow only alphanumeric characters
+          />
         </View>
 
         <Text style={[styles.label, { marginTop: 10 }]}>Max tickets</Text>

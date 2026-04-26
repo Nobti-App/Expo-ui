@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppShell } from '@/src/components/AppShell';
@@ -11,12 +11,14 @@ import { colors, radius } from '@/src/theme/colors';
 export function EstabAuthScreen() {
   const router = useRouter();
   const { setAuthSession } = useAppState();
-  const [email, setEmail] = useState('karim@cabinet.ma');
+  const passwordRef = useRef<TextInput | null>(null);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const onSignIn = async () => {
+    if (loading) return;
     setError('');
 
     try {
@@ -79,10 +81,30 @@ export function EstabAuthScreen() {
           onChangeText={setEmail}
           keyboardType="email-address"
           autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="ex: contact@etablissement.ma"
+          returnKeyType="next"
+          blurOnSubmit={false}
+          onSubmitEditing={() => passwordRef.current?.focus()}
         />
 
         <Text style={[styles.label, { marginTop: 10 }]}>Mot de passe</Text>
-        <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="••••••••" />
+        <TextInput
+          ref={passwordRef}
+          style={styles.input}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          placeholder="Entrez votre mot de passe"
+          returnKeyType="go"
+          onSubmitEditing={onSignIn}
+          onKeyPress={(event) => {
+            const pressedKey = event.nativeEvent.key;
+            if (pressedKey === 'Enter' || pressedKey === 'Tab') {
+              onSignIn();
+            }
+          }}
+        />
       </View>
 
       {!!error && <Text style={styles.error}>{error}</Text>}

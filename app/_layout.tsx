@@ -20,6 +20,7 @@ export default function RootLayout() {
           <Stack.Screen name="visitor/confirm" options={{ headerShown: false }} />
           <Stack.Screen name="visitor/scan" options={{ headerShown: false }} />
           <Stack.Screen name="join/[queue_id]" options={{ headerShown: false }} />
+          <Stack.Screen name="showboard/[queueid]" options={{ headerShown: false }} />
           <Stack.Screen name="establishment/auth" options={{ headerShown: false }} />
           <Stack.Screen name="establishment/signup" options={{ headerShown: false }} />
           <Stack.Screen name="establishment/dashboard" options={{ headerShown: false }} />

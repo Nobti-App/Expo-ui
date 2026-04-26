@@ -44,9 +44,16 @@ export function EstabSignupScreen() {
     try {
       setLoading(true);
 
+
       const signUpResult = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password,
+        /// add "operator" role to app metadata for role-based access control in Supabase
+        options: {
+          data: {
+            role: 'operator',
+          },
+        },
       });
 
       if (signUpResult.error) {
