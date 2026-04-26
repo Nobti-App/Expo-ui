@@ -1,50 +1,45 @@
-# Welcome to your Expo app 👋
+# Nobti Expo (Web + Mobile)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Cross-platform app built with Expo Router, designed from `nobti_v3.html` as a responsive app that runs on web and mobile.
 
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Run
 
 ```bash
-npm run reset-project
+npm install
+npm run web
+npm run android
+npm run ios
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Supabase setup
 
-## Learn more
+1. Copy `.env.example` to `.env`
+2. Fill these keys:
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+EXPO_PUBLIC_SUPABASE_URL=...
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+EXPO_PUBLIC_API_BASE_URL=https://api.your-backend.com
+EXPO_PUBLIC_WS_BASE_URL=wss://api.your-backend.com/ws
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Expo loads these values through [app.config.ts](app.config.ts) using `dotenv/config`. Keep secret/service keys on backend only.
 
-## Join the community
+## Project structure
 
-Join our community of developers creating universal apps.
+- `app/`: Expo Router routes (visitor + establishment flows)
+- `src/screens/`: screen containers
+- `src/components/`: reusable UI components
+- `src/state/`: global app state/context (mock queue logic)
+- `src/data/`: placeholder/mock data
+- `src/theme/`: colors/tokens
+- `assets/branding/`: extracted Nobti logo
+- `assets/placeholders/`: extracted placeholder images from the HTML reference
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Notes
+
+- Current data/flows are mock-only and ready to connect to backend APIs later.
+- Routing is already separated by domain:
+  - Visitor: `app/visitor/*`
+  - Establishment: `app/establishment/*`
+- UI is mobile-first and constrained responsively for web.
