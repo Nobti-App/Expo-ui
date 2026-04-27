@@ -1,68 +1,35 @@
 import { supabase } from '@/src/lib/supabase';
-import { appConfig } from '@/src/lib/appConfig';
-import { Platform } from 'react-native';
-import axios from 'axios';
 
-type JoinTicketPayload = {
-  ticket_id: string;
-  display_number: string;
-  establishment_name: string;
-  queue_name: string;
-  before_count?: number | null;
-  estimated_minutes?: number | null;
-  progress_percent?: number | null;
-  status?: 'waiting' | 'calling' | 'completed' | 'done' | 'cancelled' | 'no_show' | null;
+type DbTicketStatus = 'waiting' | 'calling' | 'completed' | 'done' | 'cancelled' | 'no_show' | null;
+
+type TicketRow = {
+  id: string;
+  queue_id: string;
+  ticket_number: number;
+  display_number: string | null;
+  status: DbTicketStatus;
+  holder_name: string | null;
 };
 
-type TicketLike = Record<string, unknown>;
+type QueueRow = {
+  id: string;
+  name: string;
+  prefix: string | null;
+  avg_wait_minutes: number | null;
+  establishment_id: string | null;
+  last_issued_number: number | null;
+};
 
-function readStringField(source: TicketLike, keys: string[]) {
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === 'string' && value.trim()) return value;
-  }
-
-  return '';
-}
-
-function readNumberField(source: TicketLike, keys: string[]) {
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-  }
-
-  return null;
-}
-
-function unwrapTicketPayload(payload: unknown): TicketLike {
-  if (payload && typeof payload === 'object') {
-    const source = payload as TicketLike;
-
-    if ('data' in source && source.data && typeof source.data === 'object') {
-      const nested = source.data as TicketLike;
-
-      if ('ticket' in nested && nested.ticket && typeof nested.ticket === 'object') {
-        return nested.ticket as TicketLike;
-      }
-
-      return nested;
-    }
-
-    if ('ticket' in source && source.ticket && typeof source.ticket === 'object') {
-      return source.ticket as TicketLike;
-    }
-
-    return source;
-  }
-
-  return {};
-}
+type EstablishmentRow = {
+  name: string | null;
+};
 
 export type JoinTicket = {
   ticketId: string;
   displayNumber: string;
   establishmentName: string;
   queueName: string;
+  holderName: string | null;
   beforeCount: number;
   estimatedMinutes: number | null;
   progressPercent: number;
@@ -71,47 +38,16 @@ export type JoinTicket = {
 
 export type QueueProgressEvent = Partial<JoinTicket>;
 
-const apiBaseUrl = appConfig.apiBaseUrl;
-const wsBaseUrl = appConfig.wsBaseUrl;
+export type PublicQueueDetails = {
+  id: string;
+  name: string;
+  prefix: string;
+  avgServiceMinutes: number | null;
+  peopleWaiting: number;
+  establishmentName: string;
+};
 
-function toAbsoluteBaseUrl(raw: string, kind: 'http' | 'ws') {
-  const input = raw.trim();
-
-  if (!input) return '';
-
-  if (kind === 'http' && /^https?:\/\//i.test(input)) return input.replace(/\/$/, '');
-  if (kind === 'ws' && /^wss?:\/\//i.test(input)) return input.replace(/\/$/, '');
-
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && input.startsWith('/')) {
-    const protocol = kind === 'http' ? window.location.protocol : window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    return `${protocol}//${host}${input}`.replace(/\/$/, '');
-  }
-
-  return '';
-}
-
-function requireApiBaseUrl() {
-  const normalized = toAbsoluteBaseUrl(apiBaseUrl, 'http');
-  console.log('Raw API Base URL from config:', apiBaseUrl);
-  console.log('Normalized API Base URL:', normalized);
-  if (!normalized) {
-    throw new Error(
-      'API base URL is invalid or missing. Set EXPO_PUBLIC_API_BASE_URL to an absolute http(s) URL (or a leading /path on web).'
-    );
-  }
-  return normalized;
-}
-
-function requireWsBaseUrl() {
-  const normalized = wsBaseUrl;
-  if (!normalized) {
-    throw new Error(
-      'WS base URL is invalid or missing. Set EXPO_PUBLIC_WS_BASE_URL to an absolute ws(s) URL (or a leading /path on web).'
-    );
-  }
-  return normalized;
-}
+export const JOIN_SESSION_RESET_REQUIRED = 'JOIN_SESSION_RESET_REQUIRED';
 
 export async function ensureAnonymousSession() {
   const currentSessionResult = await supabase.auth.getSession();
@@ -140,139 +76,242 @@ export async function ensureAnonymousSession() {
   };
 }
 
-function normalizeTicketPayload(payload: JoinTicketPayload): JoinTicket {
-  const source = unwrapTicketPayload(payload);
-  const ticketId = readStringField(source, ['ticket_id', 'ticketId', 'id']);
-  const prefix = readStringField(source, ['prefix', 'ticket_prefix', 'queue_prefix']);
-  const numericPart = readStringField(source, ['number', 'ticket_number', 'sequence', 'position']);
-  const rawDisplayNumber = readStringField(source, ['display_number', 'displayNumber']);
-  const displayNumber = rawDisplayNumber || (prefix && numericPart ? `${prefix}${numericPart}` : numericPart || ticketId);
-  const establishmentName = readStringField(source, ['establishment_name', 'establishmentName']);
-  const queueName = readStringField(source, ['queue_name', 'queueName']);
-  const beforeCount = readNumberField(source, ['before_count', 'beforeCount']) ?? 0;
-  const estimatedMinutes = readNumberField(source, ['estimated_minutes', 'estimatedMinutes']);
-  const progressPercent = readNumberField(source, ['progress_percent', 'progressPercent']) ?? 0;
-  const rawStatus = source.status;
-  const status =
-    rawStatus === 'completed' || rawStatus === 'done'
-      ? 'done'
-      : rawStatus === 'waiting' || rawStatus === 'calling' || rawStatus === 'cancelled' || rawStatus === 'no_show'
-        ? rawStatus
-        : 'waiting';
+function mapStatus(rawStatus: DbTicketStatus): JoinTicket['status'] {
+  if (rawStatus === 'completed' || rawStatus === 'done') return 'done';
+  if (rawStatus === 'calling' || rawStatus === 'cancelled' || rawStatus === 'no_show') return rawStatus;
+  return 'waiting';
+}
 
-  if (!ticketId) {
-    console.error('normalizeTicketPayload: missing ticket id in API response', payload);
+function isActiveStatus(status: JoinTicket['status']) {
+  return status === 'waiting' || status === 'calling';
+}
+
+function isTerminalStatus(status: JoinTicket['status']) {
+  return status === 'done' || status === 'cancelled' || status === 'no_show';
+}
+
+function computeProgress(status: JoinTicket['status'], beforeCount: number, totalActive: number) {
+  if (status === 'done' || status === 'cancelled' || status === 'no_show') return 100;
+  if (status === 'calling') return 100;
+  if (totalActive <= 0) return 0;
+
+  const positionFromStart = Math.max(0, totalActive - (beforeCount + 1));
+  const value = Math.round((positionFromStart / totalActive) * 100);
+  return Math.max(0, Math.min(100, value));
+}
+
+function buildDisplayNumber(ticket: TicketRow, queue: QueueRow) {
+  if (ticket.display_number && ticket.display_number.trim()) {
+    return ticket.display_number;
   }
 
+  const prefix = queue.prefix?.trim() ?? '';
+  const numberPart = Number.isFinite(ticket.ticket_number) ? String(ticket.ticket_number) : ticket.id;
+  return `${prefix}${numberPart}`;
+}
+
+async function fetchQueueRow(queueId: string) {
+  const { data, error } = await supabase
+    .from('queues')
+    .select('id, name, prefix, avg_wait_minutes, establishment_id, last_issued_number')
+    .eq('id', queueId)
+    .maybeSingle<QueueRow>();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('Queue not found.');
+  return data;
+}
+
+async function buildJoinTicket(ticket: TicketRow): Promise<JoinTicket> {
+  const queue = await fetchQueueRow(ticket.queue_id);
+
+  const { data: establishment, error: establishmentError } = await supabase
+    .from('establishments')
+    .select('name')
+    .eq('id', queue.establishment_id ?? '')
+    .maybeSingle<EstablishmentRow>();
+
+  if (establishmentError) throw new Error(establishmentError.message);
+
+  const activeStatuses: DbTicketStatus[] = ['waiting', 'calling'];
+
+  const { count: beforeCount, error: beforeError } = await supabase
+    .from('tickets')
+    .select('id', { count: 'exact', head: true })
+    .eq('queue_id', ticket.queue_id)
+    .in('status', activeStatuses)
+    .lt('ticket_number', ticket.ticket_number);
+
+  if (beforeError) throw new Error(beforeError.message);
+
+  const { count: totalActive, error: totalError } = await supabase
+    .from('tickets')
+    .select('id', { count: 'exact', head: true })
+    .eq('queue_id', ticket.queue_id)
+    .in('status', activeStatuses);
+
+  if (totalError) throw new Error(totalError.message);
+
+  const normalizedStatus = mapStatus(ticket.status);
+  const normalizedBeforeCount = beforeCount ?? 0;
+  const avgServiceMinutes = queue.avg_wait_minutes ?? null;
+
   return {
-    ticketId,
-    displayNumber,
-    establishmentName,
-    queueName,
-    beforeCount,
-    estimatedMinutes,
-    progressPercent,
-    status,
+    ticketId: ticket.id,
+    displayNumber: buildDisplayNumber(ticket, queue),
+    establishmentName: establishment?.name ?? '',
+    queueName: queue.name,
+    holderName: ticket.holder_name,
+    beforeCount: normalizedBeforeCount,
+    estimatedMinutes: avgServiceMinutes != null ? avgServiceMinutes * normalizedBeforeCount : null,
+    progressPercent: computeProgress(normalizedStatus, normalizedBeforeCount, totalActive ?? 0),
+    status: normalizedStatus,
   };
 }
 
-function getAxiosErrorMessage(error: unknown, fallbackMessage: string) {
-  if (axios.isAxiosError(error)) {
-    const responseData = error.response?.data;
+export async function fetchJoinTicketSnapshot(ticketId: string) {
+  const { data: ticket, error: ticketError } = await supabase
+    .from('tickets')
+    .select('id, queue_id, ticket_number, display_number, status, holder_name')
+    .eq('id', ticketId)
+    .maybeSingle<TicketRow>();
 
-    if (typeof responseData === 'string' && responseData.trim()) {
-      return responseData;
-    }
+  if (ticketError) throw new Error(ticketError.message);
+  if (!ticket) throw new Error('Ticket not found.');
 
-    if (
-      responseData &&
-      typeof responseData === 'object' &&
-      'message' in responseData &&
-      typeof responseData.message === 'string' &&
-      responseData.message.trim()
-    ) {
-      return responseData.message;
-    }
-
-    if (typeof error.message === 'string' && error.message.trim()) {
-      return error.message;
-    }
-  }
-
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-
-  return fallbackMessage;
+  return buildJoinTicket(ticket);
 }
 
-export async function createQueueTicket(queueId: string, accessToken: string, userId: string) {
-  try {
-    const base = requireApiBaseUrl();
-    const response = await axios.post<JoinTicketPayload>(
-      `${base}/queues/${encodeURIComponent(queueId)}/tickets`,
-      {
-        user_id: userId,
-        source: 'qr_join',
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+async function createTicketWithFallbackNumber(queueId: string, userId: string, holderName?: string) {
+  const queue = await fetchQueueRow(queueId);
+  const nextNumber = (queue.last_issued_number ?? 0) + 1;
+
+  const { error: queueUpdateError } = await supabase.from('queues').update({ last_issued_number: nextNumber }).eq('id', queueId);
+  if (queueUpdateError) throw new Error(queueUpdateError.message);
+
+  const displayNumber = `${queue.prefix?.trim() ?? ''}${nextNumber}`;
+
+  const { data, error } = await supabase
+    .from('tickets')
+    .insert({
+      queue_id: queueId,
+      user_id: userId,
+      holder_name: holderName?.trim() ? holderName.trim() : null,
+      ticket_number: nextNumber,
+      display_number: displayNumber,
+      status: 'waiting',
+    })
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) throw new Error(error.message);
+  if (!data?.id) throw new Error('Ticket creation failed.');
+
+  return fetchJoinTicketSnapshot(data.id);
+}
+
+async function findLatestUserTicketInQueue(queueId: string, userId: string) {
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('id, queue_id, ticket_number, display_number, status, holder_name')
+    .eq('queue_id', queueId)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle<TicketRow>();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function createQueueTicket(queueId: string, _accessToken: string, userId: string, holderName?: string) {
+  const existingTicket = await findLatestUserTicketInQueue(queueId, userId);
+
+  if (existingTicket) {
+    const existing = await buildJoinTicket(existingTicket);
+
+    if (isActiveStatus(existing.status)) {
+      if (holderName?.trim() && holderName.trim() !== (existing.holderName ?? '')) {
+        return updateTicketHolderName(existing.ticketId, holderName);
       }
-    );
 
-    return normalizeTicketPayload(response.data);
-  } catch (error) {
-    console.error('createQueueTicket failed:', error);
-    throw new Error(getAxiosErrorMessage(error, 'Failed to create queue ticket.'));
-  }
-}
-
-export async function cancelQueueTicket(ticketId: string, accessToken: string) {
-  try {
-    if (!ticketId || !ticketId.trim()) {
-      throw new Error('Missing ticket id for cancellation.');
+      return existing;
     }
 
-    const base = requireApiBaseUrl();
-    await axios.post(
-      `${base}/tickets/${encodeURIComponent(ticketId)}/cancel`,
-      undefined,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
-  } catch (error) {
-    console.error('cancelQueueTicket failed:', error);
-    throw new Error(getAxiosErrorMessage(error, 'Failed to cancel ticket.'));
+    if (isTerminalStatus(existing.status)) {
+      throw new Error(JOIN_SESSION_RESET_REQUIRED);
+    }
   }
+
+  const { data, error } = await supabase
+    .from('tickets')
+    .insert({
+      queue_id: queueId,
+      user_id: userId,
+      holder_name: holderName?.trim() ? holderName.trim() : null,
+      status: 'waiting',
+    })
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    return createTicketWithFallbackNumber(queueId, userId, holderName);
+  }
+
+  if (!data?.id) {
+    throw new Error('Ticket creation failed.');
+  }
+
+  return fetchJoinTicketSnapshot(data.id);
 }
 
-function mapProgressEvent(raw: Record<string, unknown>): QueueProgressEvent {
-  const event: QueueProgressEvent = {};
+export async function updateTicketHolderName(ticketId: string, holderName: string) {
+  const { error } = await supabase
+    .from('tickets')
+    .update({ holder_name: holderName.trim() ? holderName.trim() : null })
+    .eq('id', ticketId);
 
-  if (typeof raw.ticket_id === 'string') event.ticketId = raw.ticket_id;
-  if (typeof raw.display_number === 'string') event.displayNumber = raw.display_number;
-  if (typeof raw.establishment_name === 'string') event.establishmentName = raw.establishment_name;
-  if (typeof raw.queue_name === 'string') event.queueName = raw.queue_name;
-  if (typeof raw.before_count === 'number') event.beforeCount = raw.before_count;
-  if (typeof raw.estimated_minutes === 'number') event.estimatedMinutes = raw.estimated_minutes;
-  if (typeof raw.progress_percent === 'number') event.progressPercent = raw.progress_percent;
-  if (
-    raw.status === 'waiting' ||
-    raw.status === 'calling' ||
-    raw.status === 'done' ||
-    raw.status === 'completed' ||
-    raw.status === 'cancelled' ||
-    raw.status === 'no_show'
-  ) {
-    event.status = raw.status === 'completed' ? 'done' : (raw.status as JoinTicket['status']);
+  if (error) throw new Error(error.message);
+
+  return fetchJoinTicketSnapshot(ticketId);
+}
+
+export async function cancelQueueTicket(ticketId: string) {
+  if (!ticketId || !ticketId.trim()) {
+    throw new Error('Missing ticket id for cancellation.');
   }
 
-  return event;
+  const { error } = await supabase.from('tickets').update({ status: 'cancelled' }).eq('id', ticketId);
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchPublicQueueDetails(queueId: string): Promise<PublicQueueDetails> {
+  const queue = await fetchQueueRow(queueId);
+
+  const { data: establishment, error: establishmentError } = await supabase
+    .from('establishments')
+    .select('name')
+    .eq('id', queue.establishment_id ?? '')
+    .maybeSingle<EstablishmentRow>();
+
+  if (establishmentError) throw new Error(establishmentError.message);
+
+  const { count, error: countError } = await supabase
+    .from('tickets')
+    .select('id', { count: 'exact', head: true })
+    .eq('queue_id', queueId)
+    .in('status', ['waiting', 'calling']);
+
+  if (countError) throw new Error(countError.message);
+
+  return {
+    id: queue.id,
+    name: queue.name,
+    prefix: queue.prefix?.trim() || '',
+    avgServiceMinutes: queue.avg_wait_minutes ?? null,
+    peopleWaiting: count ?? 0,
+    establishmentName: establishment?.name ?? '',
+  };
 }
 
 export function connectQueueProgressSocket(
@@ -282,23 +321,70 @@ export function connectQueueProgressSocket(
   onEvent: (event: QueueProgressEvent) => void,
   onError: (error: Error) => void
 ) {
-  const base = requireWsBaseUrl();
-  const socketUrl = `${base}/queues/${encodeURIComponent(queueId)}/stream?ticket_id=${encodeURIComponent(ticketId)}&access_token=${encodeURIComponent(accessToken)}`;
+  let active = true;
+  let channel: ReturnType<typeof supabase.channel> | null = null;
 
-  const ws = new WebSocket(socketUrl);
-
-  ws.onmessage = (message) => {
+  const emitLatest = async () => {
     try {
-      const parsed = JSON.parse(String(message.data)) as Record<string, unknown>;
-      onEvent(mapProgressEvent(parsed));
-    } catch {
-      onError(new Error('Invalid websocket payload from backend.'));
+      const latest = await fetchJoinTicketSnapshot(ticketId);
+      if (!active) return;
+      onEvent(latest);
+    } catch (error) {
+      if (!active) return;
+      onError(error instanceof Error ? error : new Error('Failed to refresh ticket.'));
     }
   };
 
-  ws.onerror = () => {
-    onError(new Error('Queue progress websocket connection failed.'));
-  };
+  const fallbackInterval = setInterval(() => {
+    if (!active) return;
+    void emitLatest();
+  }, 4000);
 
-  return () => ws.close();
+  void (async () => {
+    try {
+      await supabase.realtime.setAuth(accessToken);
+    } catch {
+    }
+
+    if (!active) return;
+
+    channel = supabase
+      .channel(`join-ticket:${queueId}:${ticketId}`)
+      .on('broadcast', { event: 'status-update' }, async () => {
+        if (!active) return;
+        await emitLatest();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `id=eq.${ticketId}` }, async () => {
+        if (!active) return;
+        await emitLatest();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `queue_id=eq.${queueId}` }, async () => {
+        if (!active) return;
+        await emitLatest();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'queues', filter: `id=eq.${queueId}` }, async () => {
+        if (!active) return;
+        await emitLatest();
+      })
+      .subscribe((status) => {
+        if (!active) return;
+
+        if (status === 'SUBSCRIBED') {
+          void emitLatest();
+          return;
+        }
+
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          onError(new Error('Realtime subscription failed.'));
+        }
+      });
+  })();
+
+  void emitLatest();
+
+  return () => {
+    active = false;
+    clearInterval(fallbackInterval);
+    if (channel) supabase.removeChannel(channel);
+  };
 }

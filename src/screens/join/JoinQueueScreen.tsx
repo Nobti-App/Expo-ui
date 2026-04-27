@@ -1,6 +1,6 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
@@ -11,8 +11,11 @@ import {
   connectQueueProgressSocket,
   createQueueTicket,
   ensureAnonymousSession,
+  JOIN_SESSION_RESET_REQUIRED,
   JoinTicket,
-} from '@/src/lib/api/joinQueue';
+  QueueProgressEvent,
+  updateTicketHolderName,
+} from '../../lib/api/joinQueue';
 import { useAppState } from '@/src/state/AppContext';
 import { colors, radius } from '@/src/theme/colors';
 
@@ -35,7 +38,6 @@ function splitTicketDisplay(displayNumber: string) {
 }
 
 export function JoinQueueScreen() {
-  const router = useRouter();
   const { queue_id } = useLocalSearchParams<{ queue_id?: string }>();
   const queueId = useMemo(() => (typeof queue_id === 'string' ? queue_id : ''), [queue_id]);
   const { setAuthSession } = useAppState();
@@ -43,8 +45,9 @@ export function JoinQueueScreen() {
   const [ticket, setTicket] = useState<JoinTicket | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [error, setError] = useState('');
-  const [accessToken, setAccessToken] = useState('');
+  const [holderName, setHolderName] = useState('');
   const [treatedMessage, setTreatedMessage] = useState('');
 
   const stopSocketRef = useRef<(() => void) | null>(null);
@@ -56,8 +59,8 @@ export function JoinQueueScreen() {
     }
 
     setAuthSession(null, null);
-    setAccessToken('');
     setTicket(null);
+    setHolderName('');
 
     try {
       await supabase.auth.signOut({ scope: 'local' });
@@ -68,10 +71,12 @@ export function JoinQueueScreen() {
 
   const clearSessionAndFinish = async (message: string) => {
     await clearAnonymousSession();
+    setError('');
     setTreatedMessage(message);
   };
 
-  const isTreatedStatus = (status?: JoinTicket['status']) => status === 'done';
+  const isTreatedStatus = (status?: JoinTicket['status']) =>
+    status === 'done' || status === 'cancelled' || status === 'no_show';
 
   useEffect(() => {
     let active = true;
@@ -86,35 +91,51 @@ export function JoinQueueScreen() {
           return;
         }
 
-        const session = await ensureAnonymousSession();
+        let session = await ensureAnonymousSession();
         if (!active) return;
 
-        setAuthSession(session.accessToken, session.userId);
-        setAccessToken(session.accessToken);
+        let createdTicket: JoinTicket;
+        try {
+          createdTicket = await createQueueTicket(queueId, session.accessToken, session.userId);
+        } catch (ticketCreationError) {
+          if (!(ticketCreationError instanceof Error) || ticketCreationError.message !== JOIN_SESSION_RESET_REQUIRED) {
+            throw ticketCreationError;
+          }
 
-        const createdTicket = await createQueueTicket(queueId, session.accessToken, session.userId);
+          await supabase.auth.signOut({ scope: 'local' });
+          session = await ensureAnonymousSession();
+          if (!active) return;
+
+          createdTicket = await createQueueTicket(queueId, session.accessToken, session.userId);
+        }
+
+        setAuthSession(session.accessToken, session.userId);
         if (!active) return;
 
         if (isTreatedStatus(createdTicket.status)) {
-          await clearSessionAndFinish('ur ticket has been treated. thank u for ur visit');
+          await clearSessionAndFinish('your ticket has been treated. thank u for ur visit');
           return;
         }
 
         setTicket(createdTicket);
+        setHolderName(createdTicket.holderName ?? '');
 
         stopSocketRef.current = connectQueueProgressSocket(
           queueId,
           createdTicket.ticketId,
           session.accessToken,
-          async (event) => {
+          async (event: QueueProgressEvent) => {
             if (isTreatedStatus(event.status)) {
-              await clearSessionAndFinish('ur ticket has been treated. thank u for ur visit');
+              await clearSessionAndFinish('your ticket has been treated. thank u for ur visit');
               return;
             }
 
-            setTicket((current) => (current ? { ...current, ...event } : current));
+            setTicket((current: JoinTicket | null) => (current ? { ...current, ...event } : current));
+            if (typeof event.holderName === 'string') {
+              setHolderName(event.holderName);
+            }
           },
-          (wsError) => {
+          (wsError: Error) => {
             setError(wsError.message);
           }
         );
@@ -136,14 +157,13 @@ export function JoinQueueScreen() {
   const displayEstimatedMinutes = ticket?.estimatedMinutes != null ? `${ticket.estimatedMinutes} min` : 'Temps indisponible';
 
   const onCancel = async () => {
-    if (!ticket || !accessToken || cancelling) return;
+    if (!ticket || cancelling) return;
 
     try {
       setCancelling(true);
       setError('');
-      await cancelQueueTicket(ticket.ticketId, accessToken);
-      await clearAnonymousSession();
-      router.replace('/choose');
+      await cancelQueueTicket(ticket.ticketId);
+      await clearSessionAndFinish('your ticket has been treated. thank u for ur visit');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to cancel ticket.');
     } finally {
@@ -161,10 +181,28 @@ export function JoinQueueScreen() {
 
   const pct = Math.min(Math.max(ticket?.progressPercent ?? 0, 0), 100);
   const displayParts = ticket ? splitTicketDisplay(ticket.displayNumber) : { prefix: '--', number: '--' };
+  const isCalled = ticket?.status === 'calling';
+  const shouldShowReadyNow = !isCalled && (ticket?.beforeCount ?? -1) === 0 && (ticket?.estimatedMinutes ?? -1) === 0;
+
+  const onSaveName = async () => {
+    if (!ticket || savingName) return;
+
+    try {
+      setSavingName(true);
+      setError('');
+      const updated = await updateTicketHolderName(ticket.ticketId, holderName);
+      setTicket(updated);
+      setHolderName(updated.holderName ?? '');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update your name.');
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   return (
     <AppShell>
-      <AppHeader title="Mon ticket" backLabel="Ma file" onBack={() => router.replace('/choose')} />
+      <AppHeader title="Mon ticket" />
 
       {loading && <Text style={styles.state}>Création de votre ticket...</Text>}
       {!!error && <Text style={styles.error}>{error}</Text>}
@@ -191,19 +229,47 @@ export function JoinQueueScreen() {
               <Text style={[styles.chipText, { color: chip.text }]}>{chip.label}</Text>
             </View>
 
-            <View style={styles.statsRow}>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{ticket.beforeCount}</Text>
-                <Text style={styles.statLabel}>Personnes avant vous</Text>
+            {!isCalled && (
+              <View style={styles.nameCard}>
+                <Text style={styles.nameLabel}>Nom affiché</Text>
+                <TextInput
+                  value={holderName}
+                  onChangeText={setHolderName}
+                  placeholder="Votre nom"
+                  style={styles.nameInput}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                />
+                <PrimaryButton
+                  label={savingName ? 'Mise à jour...' : 'Mettre à jour le nom'}
+                  variant="outline"
+                  onPress={onSaveName}
+                  disabled={savingName || !ticket || holderName.trim() === (ticket.holderName ?? '').trim()}
+                  style={styles.nameSaveButton}
+                />
               </View>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{displayEstimatedMinutes}</Text>
-                <Text style={styles.statLabel}>Temps estimé</Text>
-              </View>
-            </View>
+            )}
+
+            {!isCalled &&
+              (shouldShowReadyNow ? (
+                <View style={styles.readyCard}>
+                  <Text style={styles.readyText}>Préparez-vous, vous allez être appelé maintenant.</Text>
+                </View>
+              ) : (
+                <View style={styles.statsRow}>
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{ticket.beforeCount}</Text>
+                    <Text style={styles.statLabel}>Personnes avant vous</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{displayEstimatedMinutes}</Text>
+                    <Text style={styles.statLabel}>Temps estimé</Text>
+                  </View>
+                </View>
+              ))}
           </View>
 
-          <View style={styles.progressWrap}>
+          {/* <View style={styles.progressWrap}>
             <View style={styles.progressTop}>
               <Text style={styles.progressLabel}>Progression</Text>
               <Text style={styles.progressLabel}>{`${Math.round(pct)}%`}</Text>
@@ -211,7 +277,7 @@ export function JoinQueueScreen() {
             <View style={styles.track}>
               <View style={[styles.fill, { width: `${pct}%` }]} />
             </View>
-          </View>
+          </View> */}
         </View>
       )}
 
@@ -220,7 +286,7 @@ export function JoinQueueScreen() {
           label={cancelling ? 'Annulation...' : 'Annuler mon ticket'}
           variant="danger"
           onPress={onCancel}
-          disabled={!ticket || !accessToken || cancelling}
+          disabled={!ticket || cancelling}
         />
       )}
     </AppShell>
@@ -306,6 +372,34 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     borderStyle: 'dashed',
   },
+  nameCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.white,
+    padding: 12,
+    marginBottom: 12,
+  },
+  nameLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.mid,
+    marginBottom: 6,
+  },
+  nameInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: colors.ink,
+    marginBottom: 8,
+  },
+  nameSaveButton: {
+    marginBottom: 0,
+    paddingVertical: 10,
+  },
   chip: {
     alignSelf: 'center',
     borderRadius: 20,
@@ -337,6 +431,22 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 20,
     color: colors.soft,
+    textAlign: 'center',
+  },
+  readyCard: {
+    backgroundColor: colors.greenLight,
+    borderColor: '#9FE1CB',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  readyText: {
+    color: colors.greenDark,
+    fontSize: 18,
+    fontWeight: '700',
     textAlign: 'center',
   },
   progressWrap: {

@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { AppShell } from '@/src/components/AppShell';
-import { ensureAnonymousSession } from '@/src/lib/api/joinQueue';
+import { ensureAnonymousSession } from '../lib/api/joinQueue';
 import { supabase } from '@/src/lib/supabase';
 import { colors, radius } from '@/src/theme/colors';
 
@@ -13,6 +13,7 @@ type TicketRow = {
   id: string;
   display_number: string | null;
   ticket_number: number | null;
+  holder_name: string | null;
   status: TicketStatus;
 };
 
@@ -25,8 +26,8 @@ type EstablishmentRow = {
   name: string | null;
 };
 
-function normalizeDisplayNumber(ticket: TicketRow) {
-  if (ticket.display_number && ticket.display_number.trim()) return ticket.display_number;
+function normalizeDisplayNumber(ticket: TicketRow, withName: boolean = false) {
+  if (ticket.display_number && ticket.display_number.trim()) return withName && ticket.holder_name ? `${ticket.display_number} - ${ticket.holder_name}` : ticket.display_number;
   if (typeof ticket.ticket_number === 'number' && Number.isFinite(ticket.ticket_number)) return String(ticket.ticket_number);
   return '--';
 }
@@ -41,8 +42,8 @@ function toBoardState(tickets: TicketRow[]) {
     .sort((a, b) => (a.ticket_number ?? Number.MAX_SAFE_INTEGER) - (b.ticket_number ?? Number.MAX_SAFE_INTEGER));
 
   return {
-    current: calling.length > 0 ? calling.map(normalizeDisplayNumber) : null,
-    upcoming: waiting.map(normalizeDisplayNumber),
+    current: calling.length > 0 ? calling.map((t) => normalizeDisplayNumber(t, true)) : null,
+    upcoming: waiting.map((t) => normalizeDisplayNumber(t)),
   };
 }
 
@@ -70,7 +71,7 @@ export function ShowboardScreen() {
         supabase.from('queues').select('name, establishment_id').eq('id', queueId).maybeSingle<QueueRow>(),
         supabase
           .from('tickets')
-          .select('id, display_number, ticket_number, status')
+          .select('id, display_number, ticket_number, status, holder_name')
           .eq('queue_id', queueId)
           .in('status', ['calling', 'waiting'])
           .order('ticket_number', { ascending: true })
@@ -80,7 +81,6 @@ export function ShowboardScreen() {
       const { data: queueData, error: queueError } = queueResponse;
       const { data: ticketsData, error: ticketsError } = ticketsResponse;
 
-      console.log('Fetched showboard data:', { queueData, ticketsData, queueError, ticketsError });
 
       if (queueError) throw queueError;
       if (ticketsError) throw ticketsError;
