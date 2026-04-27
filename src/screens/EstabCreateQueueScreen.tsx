@@ -7,7 +7,6 @@ import { AppShell } from '@/src/components/AppShell';
 import { PrimaryButton } from '@/src/components/PrimaryButton';
 import { createQueue, listQueues, QueueEntity, updateQueue } from '@/src/lib/api/queues';
 import { supabase } from '@/src/lib/supabase';
-import { useAppState } from '@/src/state/AppContext';
 import { colors, radius } from '@/src/theme/colors';
 
 
@@ -20,7 +19,6 @@ function parseMaxTickets(value: string) {
 
 export function EstabCreateQueueScreen() {
   const router = useRouter();
-  const { authSessionToken } = useAppState();
   const [queues, setQueues] = useState<QueueEntity[]>([]);
   const [establishmentId, setEstablishmentId] = useState('');
   const [name, setName] = useState('');
@@ -32,13 +30,6 @@ export function EstabCreateQueueScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-
-  const resolveAccessToken = useCallback(async () => {
-    if (authSessionToken) return authSessionToken;
-
-    const sessionResult = await supabase.auth.getSession();
-    return sessionResult.data.session?.access_token ?? '';
-  }, [authSessionToken]);
 
   const resetForm = useCallback(() => {
     setEditingQueueId(null);
@@ -53,12 +44,6 @@ export function EstabCreateQueueScreen() {
 
     try {
       setLoading(true);
-      const accessToken = await resolveAccessToken();
-
-      if (!accessToken) {
-        setError('Session invalide. Reconnectez-vous pour gérer les files.');
-        return;
-      }
 
       const userResult = await supabase.auth.getUser();
       const userId = userResult.data.user?.id;
@@ -87,7 +72,7 @@ export function EstabCreateQueueScreen() {
 
       setEstablishmentId(currentEstablishmentId);
 
-      const fetchedQueues = await listQueues(accessToken);
+      const fetchedQueues = await listQueues();
       const ownQueues = fetchedQueues.filter((queue) => queue.establishment_id === currentEstablishmentId);
       setQueues(ownQueues);
     } catch (loadError) {
@@ -95,7 +80,7 @@ export function EstabCreateQueueScreen() {
     } finally {
       setLoading(false);
     }
-  }, [resolveAccessToken]);
+  }, []);
 
   useEffect(() => {
     loadQueues();
@@ -118,12 +103,6 @@ export function EstabCreateQueueScreen() {
 
     try {
       setSaving(true);
-      const accessToken = await resolveAccessToken();
-
-      if (!accessToken) {
-        setError('Session invalide. Reconnectez-vous pour continuer.');
-        return;
-      }
 
       const payload = {
         establishment_id: establishmentId,
@@ -133,11 +112,11 @@ export function EstabCreateQueueScreen() {
       };
 
       if (editingQueueId) {
-        const updatedQueue = await updateQueue(accessToken, editingQueueId, payload);
+        const updatedQueue = await updateQueue(editingQueueId, payload);
         setQueues((prev) => prev.map((queue) => (queue.id === updatedQueue.id ? updatedQueue : queue)));
         setSuccess('File mise à jour.');
       } else {
-        const createdQueue = await createQueue(accessToken, payload);
+        const createdQueue = await createQueue(payload);
         setQueues((prev) => [createdQueue, ...prev]);
         setSuccess('File créée.');
       }
@@ -148,7 +127,7 @@ export function EstabCreateQueueScreen() {
     } finally {
       setSaving(false);
     }
-  }, [editingQueueId, establishmentId, maxTickets, name, prefix, resetForm, resolveAccessToken]);
+  }, [editingQueueId, establishmentId, maxTickets, name, prefix, resetForm]);
 
   const openShowboardLink = useCallback(async (queueId: string) => {
     const showboardUrl = `http://www.nobtiapp.ma/showboard/${queueId}`;

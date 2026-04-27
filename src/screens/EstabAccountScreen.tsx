@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, View, type DimensionValue } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type DimensionValue } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
@@ -55,6 +55,60 @@ function Field({
     <View style={{ marginBottom: 10 }}>
       <Text style={styles.label}>{label}</Text>
       <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} />
+    </View>
+  );
+}
+
+function CategoryDropdown({
+  label,
+  value,
+  onSelect,
+}: {
+  label: string;
+  value: string;
+  onSelect: (category: EstablishmentCategory) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const categoryList: EstablishmentCategory[] = ['bank', 'doctor', 'clinic', 'laboratory', 'administration', 'leisure'];
+
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text style={styles.label}>{label}</Text>
+      <Pressable
+        style={[styles.input, styles.dropdownButton]}
+        onPress={() => setIsOpen(true)}
+      >
+        <Text style={{ color: value ? colors.ink : colors.soft }}>
+          {value || 'Sélectionner une catégorie...'}
+        </Text>
+      </Pressable>
+      <Modal visible={isOpen} transparent animationType="fade">
+        <Pressable style={styles.modalOverlay} onPress={() => setIsOpen(false)} />
+        <View style={styles.modalContent}>
+          <ScrollView>
+            {categoryList.map((category) => (
+              <Pressable
+                key={category}
+                style={[
+                  styles.optionButton,
+                  value === categoryLabelMap[category] && styles.optionButtonActive,
+                ]}
+                onPress={() => {
+                  onSelect(category);
+                  setIsOpen(false);
+                }}
+              >
+                <Text style={[
+                  styles.optionText,
+                  value === categoryLabelMap[category] && styles.optionTextActive,
+                ]}>
+                  {categoryLabelMap[category]}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -158,7 +212,8 @@ export function EstabAccountScreen() {
           category: normalizedCategory,
           address: address.trim() || null,
         })
-        .eq('id', establishmentId);
+        .eq('id', establishmentId)
+        .select();
 
       if (establishmentError) throw establishmentError;
 
@@ -172,6 +227,7 @@ export function EstabAccountScreen() {
       if (authUpdateError) throw authUpdateError;
 
       setSuccess('Informations mises à jour avec succès.');
+      await loadAccount();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Impossible de sauvegarder les informations.');
     } finally {
@@ -203,11 +259,10 @@ export function EstabAccountScreen() {
       <>
         <View style={styles.card}>
         <Field label="Nom de l'établissement" value={name} onChangeText={setName} placeholder="Ex: Cabinet Karim" />
-        <Field
+        <CategoryDropdown
           label="Nature de l'activité"
           value={activity}
-          onChangeText={setActivity}
-          placeholder="Banque, Médecin, Clinique, Laboratoire..."
+          onSelect={(category) => setActivity(categoryLabelMap[category])}
         />
         <Field label="Numéro de téléphone" value={phone} onChangeText={setPhone} placeholder="Ex: +212 6 12 34 56 78" />
         <Field label="Adresse" value={address} onChangeText={setAddress} placeholder="Ex: Hay Ismailia, Beni Mellal" />
@@ -273,5 +328,40 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 8,
     fontSize: 12,
+  },
+  dropdownButton: {
+    justifyContent: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: 300,
+    paddingVertical: 8,
+  },
+  optionButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  optionButtonActive: {
+    backgroundColor: colors.greenLight,
+  },
+  optionText: {
+    fontSize: 14,
+    color: colors.ink,
+  },
+  optionTextActive: {
+    color: colors.green,
+    fontWeight: '700',
   },
 });

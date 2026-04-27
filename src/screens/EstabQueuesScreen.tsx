@@ -1,14 +1,11 @@
 import { useRouter } from 'expo-router';
-import axios from 'axios';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
 import { PrimaryButton } from '@/src/components/PrimaryButton';
-import { appConfig } from '@/src/lib/appConfig';
 import { supabase } from '@/src/lib/supabase';
-import { useAppState } from '@/src/state/AppContext';
 import { colors, radius } from '@/src/theme/colors';
 
 type TicketStatus = 'waiting' | 'calling' | 'completed' | 'cancelled' | 'no_show' | null;
@@ -42,104 +39,10 @@ function formatCreatedAt(value: string | null) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function getApiBaseUrl() {
-  const base = appConfig.apiBaseUrl.trim().replace(/\/$/, '');
-  if (!base) {
-    throw new Error('API base URL is missing. Configure apiBaseUrl in app config.');
-  }
 
-  return base;
-}
-
-function getAxiosErrorMessage(error: unknown, fallbackMessage: string) {
-  if (axios.isAxiosError(error)) {
-    const responseData = error.response?.data;
-
-    if (typeof responseData === 'string' && responseData.trim()) {
-      return responseData;
-    }
-
-    if (
-      responseData &&
-      typeof responseData === 'object' &&
-      'message' in responseData &&
-      typeof responseData.message === 'string' &&
-      responseData.message.trim()
-    ) {
-      return responseData.message;
-    }
-
-    if (typeof error.message === 'string' && error.message.trim()) {
-      return error.message;
-    }
-  }
-
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-
-  return fallbackMessage;
-}
-
-async function patchTicketStatus(
-  ticketId: string,
-  status: Exclude<TicketStatus, null>,
-  accessToken: string
-) {
-  const base = getApiBaseUrl();
-  const normalizedBase = base.endsWith('/api/v1') ? base : `${base}/api/v1`;
-  const endpointCandidates = [
-    `${base}/tickets/${encodeURIComponent(ticketId)}/status`,
-    `${normalizedBase}/tickets/${encodeURIComponent(ticketId)}/status`,
-  ];
-
-  let lastError: unknown = null;
-
-  for (const endpoint of endpointCandidates) {
-    try {
-      await axios.post(
-        endpoint,
-        { status },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
-      return;
-    } catch (error) {
-      lastError = error;
-
-      if (!axios.isAxiosError(error)) continue;
-      if (error.response?.status !== 404 && error.response?.status !== 405) throw error;
-    }
-
-    try {
-      await axios.patch(
-        endpoint,
-        { status },
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
-      return;
-    } catch (error) {
-      lastError = error;
-
-      if (!axios.isAxiosError(error)) continue;
-      if (error.response?.status !== 404) throw error;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('Ticket action request failed.');
-}
 
 export function EstabQueuesScreen() {
   const router = useRouter();
-  const { authSessionToken } = useAppState();
   const [establishmentId, setEstablishmentId] = useState('');
   const [queues, setQueues] = useState<QueueRow[]>([]);
   const [selectedQueueId, setSelectedQueueId] = useState('');
@@ -151,21 +54,9 @@ export function EstabQueuesScreen() {
   const previousStatuses = useRef<Record<string, TicketStatus>>({});
   const [animatedTicketId, setAnimatedTicketId] = useState('');
 
-  const resolveAccessToken = useCallback(async () => {
-    if (authSessionToken) return authSessionToken;
-    const sessionResult = await supabase.auth.getSession();
-    return sessionResult.data.session?.access_token ?? '';
-  }, [authSessionToken]);
-
   const fetchSnapshot = useCallback(async () => {
     try {
       setError('');
-
-      const accessToken = await resolveAccessToken();
-      if (!accessToken) {
-        setError('Session invalide. Reconnectez-vous pour gérer les files.');
-        return;
-      }
 
       const userResult = await supabase.auth.getUser();
       const userId = userResult.data.user?.id;
@@ -257,7 +148,7 @@ export function EstabQueuesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [pulse, resolveAccessToken]);
+  }, [pulse]);
 
   useEffect(() => {
     let active = true;
@@ -310,21 +201,24 @@ export function EstabQueuesScreen() {
         setError('');
         setActionLoading(true);
 
-        const accessToken = await resolveAccessToken();
-        if (!accessToken) {
-          throw new Error('Session invalide. Reconnectez-vous pour gérer les tickets.');
-        }
+        const { error: updateError } = await supabase
+          .from('tickets')
+          .update({ status })
+          .eq('id', ticketId);
 
-        await patchTicketStatus(ticketId, status, accessToken);
+        if (updateError) {
+          throw updateError;
+        }
 
         await fetchSnapshot();
       } catch (statusError) {
-        setError(getAxiosErrorMessage(statusError, 'Mise à jour du ticket impossible.'));
+        const message = statusError instanceof Error ? statusError.message : 'Mise à jour du ticket impossible.';
+        setError(message);
       } finally {
         setActionLoading(false);
       }
     },
-    [fetchSnapshot, resolveAccessToken]
+    [fetchSnapshot]
   );
 
   const onCallNext = useCallback(async () => {
