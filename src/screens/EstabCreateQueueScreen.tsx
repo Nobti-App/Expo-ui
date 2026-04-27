@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Image, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Linking, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
@@ -150,6 +150,21 @@ export function EstabCreateQueueScreen() {
     }
   }, [editingQueueId, establishmentId, maxTickets, name, prefix, resetForm, resolveAccessToken]);
 
+  const openShowboardLink = useCallback(async (queueId: string) => {
+    const showboardUrl = `http://www.nobtiapp.ma/showboard/${queueId}`;
+
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.open(showboardUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      await Linking.openURL(showboardUrl);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : 'Impossible d’ouvrir le showboard.');
+    }
+  }, []);
+
   const formTitle = editingQueueId ? 'Modifier la file' : 'Créer une file';
   const submitLabel = editingQueueId ? 'Enregistrer les modifications' : 'Créer la file';
 
@@ -205,7 +220,7 @@ export function EstabCreateQueueScreen() {
         </View>
       ) : (
         queues.map((queue) => {
-          const joinUrl = `http://localhost:8081/join/${queue.id}`;
+          const joinUrl = `http://www.nobtiapp.ma/join/${queue.id}`;
           const qrVisible = visibleQrQueueId === queue.id;
           const maxTicketsLabel = queue.max_tickets ?? '—';
 
@@ -237,6 +252,13 @@ export function EstabCreateQueueScreen() {
                   onPress={() => setVisibleQrQueueId((prev) => (prev === queue.id ? null : queue.id))}
                 />
               </View>
+
+              <PrimaryButton
+                label="Ouvrir showboard"
+                variant="outline"
+                style={styles.showboardAction}
+                onPress={() => void openShowboardLink(queue.id)}
+              />
 
               {qrVisible && (
                 <View style={styles.qrWrap}>
@@ -319,6 +341,10 @@ const styles = StyleSheet.create({
   queueActions: {
     flexDirection: 'row',
     gap: 8,
+  },
+  showboardAction: {
+    marginTop: 8,
+    marginBottom: 0,
   },
   qrWrap: {
     marginTop: 10,
