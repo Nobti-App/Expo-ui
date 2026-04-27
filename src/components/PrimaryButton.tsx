@@ -27,7 +27,7 @@ export function PrimaryButton({ label, onPress, variant = 'green', disabled, sty
 
 const styles = StyleSheet.create({
   base: {
-    width: '100%',
+    alignSelf: 'stretch',
     borderRadius: radius.md,
     paddingVertical: 14,
     alignItems: 'center',

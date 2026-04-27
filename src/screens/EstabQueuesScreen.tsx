@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
@@ -53,6 +53,8 @@ export function EstabQueuesScreen() {
   const pulse = useRef(new Animated.Value(1)).current;
   const previousStatuses = useRef<Record<string, TicketStatus>>({});
   const [animatedTicketId, setAnimatedTicketId] = useState('');
+  const [showManualTicketModal, setShowManualTicketModal] = useState(false);
+  const [manualTicketName, setManualTicketName] = useState('');
 
   const fetchSnapshot = useCallback(async () => {
     try {
@@ -226,6 +228,64 @@ export function EstabQueuesScreen() {
     await updateTicketStatus(waiting[0].id, 'calling');
   }, [selectedQueueId, waiting, hasCurrent, updateTicketStatus]);
 
+  const createManualTicket = useCallback(async () => {
+    setError('');
+    if (!selectedQueueId) {
+      setError('Veuillez sélectionner une file.');
+      return;
+    }
+    if (!manualTicketName.trim()) {
+      setError('Le nom du client est requis.');
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      // Get the queue to find prefix and last ticket number
+      const queueData = queues.find((q) => q.id === selectedQueueId);
+      const prefix = queueData?.prefix || 'A';
+
+      // Query the highest ticket_number for this queue
+      const { data: lastTickets, error: queryError } = await supabase
+        .from('tickets')
+        .select('ticket_number')
+        .eq('queue_id', selectedQueueId)
+        .order('ticket_number', { ascending: false })
+        .limit(1);
+
+      if (queryError) throw queryError;
+
+      // Calculate next ticket number
+      const lastNumber = (lastTickets?.[0]?.ticket_number as number | undefined) ?? 0;
+      const nextTicketNumber = lastNumber + 1;
+      const displayNum = `${prefix}${nextTicketNumber}`;
+
+      // Create the ticket with auto-generated number
+      const { error: insertError } = await supabase
+        .from('tickets')
+        .insert([
+          {
+            queue_id: selectedQueueId,
+            holder_name: manualTicketName.trim(),
+            ticket_number: nextTicketNumber,
+            display_number: displayNum,
+            status: 'waiting',
+          },
+        ]);
+
+      if (insertError) throw insertError;
+
+      setManualTicketName('');
+      setShowManualTicketModal(false);
+      await fetchSnapshot();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur lors de la création du ticket.';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [selectedQueueId, manualTicketName, queues, fetchSnapshot]);
+
   const selectedQueueName = useMemo(() => {
     return queues.find((queue) => queue.id === selectedQueueId)?.name ?? 'File';
   }, [queues, selectedQueueId]);
@@ -264,6 +324,12 @@ export function EstabQueuesScreen() {
           style={{ flex: 1 }}
           onPress={onCallNext}
           disabled={actionLoading || hasCurrent || waiting.length === 0 || !selectedQueueId}
+        />
+        <PrimaryButton
+          label="+ Ticket manuel"
+          variant="outline"
+          onPress={() => setShowManualTicketModal(true)}
+          disabled={actionLoading || !selectedQueueId}
         />
       </View>
 
@@ -321,6 +387,44 @@ export function EstabQueuesScreen() {
         <Text style={styles.empty}>Aucun ticket en attente.</Text>
       )}
       {!!error && <Text style={styles.error}>{error}</Text>}
+
+      {/* Manual ticket modal */}
+      <Modal visible={showManualTicketModal} transparent animationType="fade">
+        <Pressable style={styles.modalOverlay} onPress={() => !actionLoading && setShowManualTicketModal(false)} />
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Créer un ticket</Text>
+            <Pressable onPress={() => !actionLoading && setShowManualTicketModal(false)} disabled={actionLoading}>
+              <Text style={styles.modalClose}>×</Text>
+            </Pressable>
+          </View>
+          <View style={styles.modalBody}>
+            <Text style={styles.modalLabel}>Nom du client</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Ex: Ahmed Hassan"
+              value={manualTicketName}
+              onChangeText={setManualTicketName}
+              editable={!actionLoading}
+            />
+          </View>
+          <View style={styles.modalFooter}>
+            <PrimaryButton
+              label="Annuler"
+              variant="outline"
+              onPress={() => setShowManualTicketModal(false)}
+              disabled={actionLoading}
+              style={{ flex: 1 }}
+            />
+            <PrimaryButton
+              label={actionLoading ? 'Création...' : 'Créer'}
+              onPress={createManualTicket}
+              disabled={actionLoading}
+              style={{ flex: 1 }}
+            />
+          </View>
+        </View>
+      </Modal>
     </AppShell>
   );
 }
@@ -431,5 +535,64 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 12,
     fontSize: 12,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    width: '85%',
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  modalClose: {
+    fontSize: 28,
+    color: colors.soft,
+    fontWeight: '300',
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.mid,
+    marginBottom: 6,
+  },
+  modalInput: {
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.ink,
+    marginBottom: 14,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
   },
 });
