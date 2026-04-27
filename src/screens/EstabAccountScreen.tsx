@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View, type DimensionValue } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
@@ -179,11 +179,29 @@ export function EstabAccountScreen() {
     }
   }, [address, establishmentId, hours, name, normalizedCategory, phone]);
 
+  if (loading) {
+    return (
+      <AppShell>
+        <AppHeader title="Mon compte" backLabel="Dashboard" onBack={() => router.push('/establishment/dashboard')} />
+        <View style={styles.card}>
+          <LoadingLine width="78%" />
+          <LoadingLine width="92%" />
+          <LoadingLine width="68%" />
+          <LoadingLine width="88%" />
+          <LoadingLine width="74%" />
+        </View>
+        <Text style={styles.info}>Chargement des informations du compte...</Text>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <AppHeader title="Mon compte" backLabel="Dashboard" onBack={() => router.push('/establishment/dashboard')} />
 
-      <View style={styles.card}>
+      {!loading && (
+      <>
+        <View style={styles.card}>
         <Field label="Nom de l'établissement" value={name} onChangeText={setName} placeholder="Ex: Cabinet Karim" />
         <Field
           label="Nature de l'activité"
@@ -194,16 +212,21 @@ export function EstabAccountScreen() {
         <Field label="Numéro de téléphone" value={phone} onChangeText={setPhone} placeholder="Ex: +212 6 12 34 56 78" />
         <Field label="Adresse" value={address} onChangeText={setAddress} placeholder="Ex: Hay Ismailia, Beni Mellal" />
         <Field label="Horaires" value={hours} onChangeText={setHours} placeholder="Ex: Lun–Ven 08:00–18:00" />
-      </View>
+        </View>
 
-      {loading && <Text style={styles.info}>Chargement des informations...</Text>}
-      {!!error && <Text style={styles.error}>{error}</Text>}
-      {!!success && <Text style={styles.success}>{success}</Text>}
+        {!!error && <Text style={styles.error}>{error}</Text>}
+        {!!success && <Text style={styles.success}>{success}</Text>}
 
-      <PrimaryButton label={saving ? 'Sauvegarde...' : 'Sauvegarder'} onPress={onSave} disabled={loading || saving} />
-      <PrimaryButton label="Modifier le mot de passe" variant="danger" onPress={() => {}} />
+        <PrimaryButton label={saving ? 'Sauvegarde...' : 'Sauvegarder'} onPress={onSave} disabled={loading || saving} />
+        {/* <PrimaryButton label="Modifier le mot de passe" variant="danger" onPress={() => router.push('/change-password')} /> */}
+      </>
+      )}
     </AppShell>
   );
+}
+
+function LoadingLine({ width }: { width: DimensionValue }) {
+  return <View style={[styles.loadingLine, { width }]} />;
 }
 
 const styles = StyleSheet.create({
@@ -223,6 +246,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: colors.ink,
+  },
+  loadingLine: {
+    height: 14,
+    borderRadius: 999,
+    backgroundColor: colors.border,
+    marginBottom: 14,
   },
   info: {
     color: colors.soft,

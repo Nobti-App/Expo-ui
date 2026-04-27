@@ -219,7 +219,7 @@ export function EstabQueuesScreen() {
         .from('tickets')
         .select('id, queue_id, display_number, ticket_number, holder_name, created_at, status')
         .in('queue_id', queueIds)
-        .in('status', ['waiting', 'calling'])
+        .in('status', ['waiting', 'calling', 'completed'])
         .order('ticket_number', { ascending: true })
         .returns<TicketRow[]>();
 
@@ -353,7 +353,9 @@ export function EstabQueuesScreen() {
       <View style={styles.cardTop}>
         <Mini v={String(waiting.length)} l="Attente" color={colors.amber} />
         <Mini v={String(current.length)} l="En cours" color={colors.green} />
-        <Mini v={String(establishmentId ? queues.length : 0)} l="Files" color={colors.blueDark} />
+        {/* <Mini v={String(establishmentId ? queues.length : 0)} l="Files" color={colors.blueDark} /> */}
+        {/* /// Mini for the number of treated tickets */}
+        <Mini v={String(establishmentId ? Object.values(ticketsByQueueId).flat().filter((t) => t.status === 'completed').length : 0)} l="Traités" color={colors.blueDark} />
       </View>
 
       <View style={styles.quickRow}>

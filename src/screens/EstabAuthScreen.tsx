@@ -109,7 +109,12 @@ export function EstabAuthScreen() {
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <PrimaryButton label={loading ? 'Connexion...' : 'Se connecter'} variant="blue" onPress={onSignIn} disabled={loading || !email.trim() || !password.trim()} />
+      <PrimaryButton
+        label={loading ? 'Connexion...' : 'Se connecter'}
+        variant="blue"
+        onPress={onSignIn}
+        disabled={loading || !email.trim() || !password.trim()}
+      />
       <PrimaryButton label="Créer un nouveau profil établissement" variant="outline" onPress={() => router.push('/establishment/signup' as never)} />
     </AppShell>
   );
