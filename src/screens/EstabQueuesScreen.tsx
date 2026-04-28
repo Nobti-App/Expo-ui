@@ -14,6 +14,7 @@ type QueueRow = {
   id: string;
   name: string | null;
   prefix: string | null;
+  last_issued_number: number | null;
 };
 
 type TicketRow = {
@@ -88,7 +89,7 @@ export function EstabQueuesScreen() {
 
       const { data: queueRows, error: queueError } = await supabase
         .from('queues')
-        .select('id, name, prefix')
+        .select('id, name, prefix, last_issued_number')
         .eq('establishment_id', ownedEstablishmentId)
         .order('updated_at', { ascending: false })
         .returns<QueueRow[]>();
@@ -241,24 +242,20 @@ export function EstabQueuesScreen() {
 
     try {
       setActionLoading(true);
-      // Get the queue to find prefix and last ticket number
+      // Get the queue to find prefix and last issued number
       const queueData = queues.find((q) => q.id === selectedQueueId);
-      const prefix = queueData?.prefix || 'A';
+      const prefix = queueData?.prefix || '';
 
-      // Query the highest ticket_number for this queue
-      const { data: lastTickets, error: queryError } = await supabase
-        .from('tickets')
-        .select('ticket_number')
-        .eq('queue_id', selectedQueueId)
-        .order('ticket_number', { ascending: false })
-        .limit(1);
-
-      if (queryError) throw queryError;
-
-      // Calculate next ticket number
-      const lastNumber = (lastTickets?.[0]?.ticket_number as number | undefined) ?? 0;
+      const lastNumber = queueData?.last_issued_number ?? 0;
       const nextTicketNumber = lastNumber + 1;
       const displayNum = `${prefix}${nextTicketNumber}`;
+
+      const { error: queueUpdateError } = await supabase
+        .from('queues')
+        .update({ last_issued_number: nextTicketNumber })
+        .eq('id', selectedQueueId);
+
+      if (queueUpdateError) throw queueUpdateError;
 
       // Create the ticket with auto-generated number
       const { error: insertError } = await supabase

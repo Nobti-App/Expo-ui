@@ -1,11 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { AppShell } from '@/src/components/AppShell';
 import { ensureAnonymousSession } from '../lib/api/joinQueue';
 import { supabase } from '@/src/lib/supabase';
-import { colors, radius } from '@/src/theme/colors';
 
 type TicketStatus = 'waiting' | 'calling' | 'completed' | 'cancelled' | 'no_show' | null;
 
@@ -20,31 +18,23 @@ type TicketRow = {
 type QueueRow = {
   establishment_id: string | null;
   name: string | null;
+  prefix: string | null;
+  avg_wait_minutes: number | null;
 };
 
 type EstablishmentRow = {
   name: string | null;
 };
 
-function normalizeDisplayNumber(ticket: TicketRow, withName: boolean = false) {
-  if (ticket.display_number && ticket.display_number.trim()) return withName && ticket.holder_name ? `${ticket.display_number} - ${ticket.holder_name}` : ticket.display_number;
+function normalizeDisplayNumber(ticket: TicketRow) {
+  if (ticket.display_number && ticket.display_number.trim()) return ticket.display_number;
   if (typeof ticket.ticket_number === 'number' && Number.isFinite(ticket.ticket_number)) return String(ticket.ticket_number);
   return '--';
 }
 
-function toBoardState(tickets: TicketRow[]) {
-  const calling = tickets
-    .filter((ticket) => ticket.status === 'calling')
-    .sort((a, b) => (a.ticket_number ?? Number.MAX_SAFE_INTEGER) - (b.ticket_number ?? Number.MAX_SAFE_INTEGER));
-
-  const waiting = tickets
-    .filter((ticket) => ticket.status === 'waiting')
-    .sort((a, b) => (a.ticket_number ?? Number.MAX_SAFE_INTEGER) - (b.ticket_number ?? Number.MAX_SAFE_INTEGER));
-
-  return {
-    current: calling.length > 0 ? calling.map((t) => normalizeDisplayNumber(t, true)) : null,
-    upcoming: waiting.map((t) => normalizeDisplayNumber(t)),
-  };
+function getClockTime() {
+  const now = new Date();
+  return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 export function ShowboardScreen() {
@@ -53,10 +43,15 @@ export function ShowboardScreen() {
 
   const [establishmentName, setEstablishmentName] = useState('');
   const [queueName, setQueueName] = useState('');
-  const [currentTicket, setCurrentTicket] = useState<string[] | null>(null);
-  const [upcomingTickets, setUpcomingTickets] = useState<string[]>([]);
+  const [queuePrefix, setQueuePrefix] = useState('A');
+  const [currentTicket, setCurrentTicket] = useState<TicketRow | null>(null);
+  const [upcomingTickets, setUpcomingTickets] = useState<TicketRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [clock, setClock] = useState(getClockTime());
+  const [servedCount, setServedCount] = useState(0);
+  const [avgWaitMinutes, setAvgWaitMinutes] = useState<number | null>(null);
+  const pulse = React.useRef(new Animated.Value(1)).current;
 
   const fetchSnapshot = useCallback(async () => {
     if (!queueId) {
@@ -68,7 +63,7 @@ export function ShowboardScreen() {
     try {
       setError('');
       const [queueResponse, ticketsResponse] = await Promise.all([
-        supabase.from('queues').select('name, establishment_id').eq('id', queueId).maybeSingle<QueueRow>(),
+        supabase.from('queues').select('name, establishment_id, prefix, avg_wait_minutes').eq('id', queueId).maybeSingle<QueueRow>(),
         supabase
           .from('tickets')
           .select('id, display_number, ticket_number, status, holder_name')
@@ -80,7 +75,6 @@ export function ShowboardScreen() {
 
       const { data: queueData, error: queueError } = queueResponse;
       const { data: ticketsData, error: ticketsError } = ticketsResponse;
-
 
       if (queueError) throw queueError;
       if (ticketsError) throw ticketsError;
@@ -96,21 +90,45 @@ export function ShowboardScreen() {
 
       if (estabError) throw estabError;
 
-      console.log('Fetched showboard snapshot:', { queueData, ticketsData });
-
       setQueueName(queueData?.name ?? '');
       setEstablishmentName(estabData?.name ?? '');
+      setQueuePrefix(queueData?.prefix ?? 'A');
+      setAvgWaitMinutes(queueData?.avg_wait_minutes ?? null);
 
-      const boardState = toBoardState(ticketsData ?? []);
-      setCurrentTicket(boardState.current);
-      setUpcomingTickets(boardState.upcoming);
+      // Fetch served tickets from today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const { count: servedTodayCount, error: servedError } = await supabase
+        .from('tickets')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_id', queueId)
+        .eq('status', 'completed')
+        .gte('created_at', today.toISOString());
+
+      if (servedError) throw servedError;
+      setServedCount(servedTodayCount ?? 0);
+
+      const allTickets = ticketsData ?? [];
+      const calling = allTickets.filter((t) => t.status === 'calling');
+      const waiting = allTickets.filter((t) => t.status === 'waiting');
+
+      setCurrentTicket(calling.length > 0 ? calling[0] : null);
+      setUpcomingTickets(waiting);
+
+      if (calling.length > 0) {
+        pulse.setValue(1);
+        Animated.sequence([
+          Animated.timing(pulse, { toValue: 1.08, duration: 300, useNativeDriver: true }),
+          Animated.timing(pulse, { toValue: 1, duration: 300, useNativeDriver: true }),
+        ]).start();
+      }
     } catch (snapshotError) {
       const message = snapshotError instanceof Error ? snapshotError.message : 'Failed to load showboard data.';
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [queueId]);
+  }, [queueId, pulse]);
 
   useEffect(() => {
     let active = true;
@@ -142,138 +160,362 @@ export function ShowboardScreen() {
     };
   }, [queueId, fetchSnapshot]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setClock(getClockTime());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const waitingCount = upcomingTickets.length;
+
   return (
-    <AppShell>
+    <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.label}>Showboard</Text>
-        <Text style={styles.establishment}>{establishmentName || 'Établissement'}</Text>
-        <Text style={styles.queueName}>{queueName || 'File'}</Text>
-      </View>
-
-      {!!error && <Text style={styles.error}>{error}</Text>}
-
-      <View style={styles.currentCard}>
-        {/* <Text style={styles.sectionTitle}>Numéro en cours</Text>
-        { currentTicket ? 
-          currentTicket.map((num, index) => (
-            <Text key={`${num}-${index}`} style={styles.currentNumber}>{num}</Text>
-          ))
-          : <Text style={styles.currentNumber}>--</Text>
-        } */}
-        <Text style={styles.sectionTitle}>Numéros en cours</Text>
-        {/* // join with - */}
-        {currentTicket ? (
-          <Text style={styles.currentNumber}>{currentTicket.join(' - ')}</Text>
-        ) : (
-          <Text style={styles.currentNumber}>--</Text>
-        )}
-      </View>
-                
-      <View style={styles.listCard}>
-        <Text style={styles.sectionTitle}>À appeler ensuite</Text>
-        {loading ? (
-          <Text style={styles.empty}>Chargement...</Text>
-        ) : upcomingTickets.length === 0 ? (
-          <Text style={styles.empty}>Aucun numéro en attente.</Text>
-        ) : (
-          <View style={styles.upcomingWrap}>
-            {upcomingTickets.map((ticket, index) => (
-              <View key={`${ticket}-${index}`} style={styles.upcomingItem}>
-                <Text style={styles.upcomingText}>{ticket}</Text>
-              </View>
-            ))}
+        <View style={styles.brand}>
+          <View style={styles.brandLogo}>
+            <Text style={styles.brandLogoText}>N</Text>
           </View>
-        )}
+          <View>
+            <Text style={styles.brandName}>{establishmentName || 'Établissement'}</Text>
+            <Text style={styles.brandSub}>File d'attente</Text>
+          </View>
+        </View>
+        <Text style={styles.headerTime}>{clock}</Text>
       </View>
-    </AppShell>
+
+      <ScrollView contentContainerStyle={styles.mainGrid} showsVerticalScrollIndicator={false}>
+        {/* Current ticket card */}
+        <View style={styles.currentCard}>
+          <Text style={styles.sectionLabel}>
+            <Text style={styles.pulseDot}>●</Text>
+            {' '}Numéro en cours
+          </Text>
+          <View style={styles.ticketDisplay}>
+            <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulse }] }]}>
+              {currentTicket ? normalizeDisplayNumber(currentTicket) : '--'}
+            </Animated.Text>
+            <View style={styles.ticketDivider} />
+            <View style={styles.ticketDetails}>
+              <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
+              <View style={styles.ticketMeta}>
+                <View style={styles.counterBadge}>
+                  <Text style={styles.counterBadgeText}>{queueName || 'File'}</Text>
+                </View>
+                <View style={styles.timeBadge}>
+                  <Text style={styles.timeBadgeText}>{clock}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Stats row */}
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, styles.statHighlight]}>
+            <Text style={styles.statValue}>{waitingCount}</Text>
+            <Text style={styles.statLabel}>En attente</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{servedCount}</Text>
+            <Text style={styles.statLabel}>Servis auj.</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
+            <Text style={styles.statLabel}>Temps moyen par ticket</Text>
+          </View>
+          {/* <View style={styles.statCard}>
+            <Text style={styles.statValue}>1</Text>
+            <Text style={styles.statLabel}>Guichets actifs</Text>
+          </View> */}
+        </View>
+
+        {/* Queue list */}
+        <View style={styles.queueSection}>
+          <Text style={styles.sectionLabel}>À appeler ensuite</Text>
+          <View style={styles.queueList}>
+            {loading ? (
+              <Text style={styles.emptyText}>Chargement...</Text>
+            ) : upcomingTickets.length === 0 ? (
+              <Text style={styles.emptyText}>Aucun numéro en attente</Text>
+            ) : (
+              upcomingTickets.slice(0, 8).map((ticket, idx) => (
+                <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
+                  <Text style={styles.queuePos}>{idx + 1}</Text>
+                  <Text style={styles.queueTicket}>{normalizeDisplayNumber(ticket)}</Text>
+                  <Text style={styles.queueName}>{ticket.holder_name || 'N/A'}</Text>
+                  {idx === 0 && <View style={styles.nextChip}><Text style={styles.nextChipText}>Suivant</Text></View>}
+                </View>
+              ))
+            )}
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <Text style={styles.footerMsg}>Merci de votre patience</Text>
+        <Text style={styles.footerPowered}>nobtiapp.ma</Text>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f7faf9',
+  },
   header: {
-    marginBottom: 16,
+    backgroundColor: '#0f1c18',
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  brandLogo: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#1a8a6e',
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  label: {
-    fontSize: 12,
-    color: colors.soft,
+  brandLogoText: {
+    fontSize: 20,
     fontWeight: '700',
-    textTransform: 'uppercase',
+    color: '#fff',
     letterSpacing: 1,
   },
-  establishment: {
-    marginTop: 4,
-    fontSize: 28,
-    lineHeight: 32,
+  brandName: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '500',
+  },
+  brandSub: {
+    color: '#6b8e86',
+    fontSize: 12,
+    marginTop: 1,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  headerTime: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 14,
+    letterSpacing: 0.5,
+    fontVariant: ['tabular-nums'],
+  },
+
+  mainGrid: {
+    paddingHorizontal: 28,
+    paddingVertical: 24,
+    gap: 20,
+  },
+
+  currentCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#d4e4e0',
+    borderRadius: 18,
+    paddingVertical: 28,
+    paddingHorizontal: 32,
+    overflow: 'hidden',
+  },
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: '#6b8e86',
+    marginBottom: 16,
+  },
+  pulseDot: {
+    color: '#22c55e',
+    fontSize: 8,
+    marginRight: 4,
+  },
+  ticketDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 28,
+  },
+  ticketNumber: {
+    fontSize: 96,
     fontWeight: '800',
-    color: colors.ink,
+    color: '#0d5c4a',
+    letterSpacing: 2,
+    lineHeight: 96,
+  },
+  ticketDivider: {
+    width: 3,
+    height: 80,
+    backgroundColor: '#d4e4e0',
+    borderRadius: 2,
+  },
+  ticketDetails: {
+    flex: 1,
+  },
+  ticketName: {
+    fontSize: 42,
+    fontWeight: '700',
+    color: '#0f1c18',
+    letterSpacing: -1,
+    lineHeight: 46,
+  },
+  ticketMeta: {
+    marginTop: 8,
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  counterBadge: {
+    backgroundColor: '#e6f4f1',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+  },
+  counterBadgeText: {
+    color: '#0d5c4a',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  timeBadge: {
+    backgroundColor: '#fdf6e7',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+  },
+  timeBadgeText: {
+    color: '#c8952a',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    fontVariant: ['tabular-nums'],
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d4e4e0',
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  statHighlight: {
+    backgroundColor: '#e6f4f1',
+  },
+  statValue: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#0f1c18',
+    letterSpacing: 1,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#6b8e86',
+    fontWeight: '500',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+
+  queueSection: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d4e4e0',
+    borderRadius: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    marginBottom: 24,
+  },
+  queueList: {
+    gap: 8,
+    marginTop: 12,
+  },
+  queueItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#f7faf9',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  queueItemNext: {
+    backgroundColor: '#e6f4f1',
+    borderColor: '#1a8a6e',
+  },
+  queuePos: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#6b8e86',
+    width: 32,
     textAlign: 'center',
+  },
+  queueTicket: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0f1c18',
+    minWidth: 48,
+    fontVariant: ['tabular-nums'],
   },
   queueName: {
-    marginTop: 6,
     fontSize: 14,
-    color: colors.mid,
+    color: '#0f1c18',
+    fontWeight: '400',
+  },
+  nextChip: {
+    marginLeft: 'auto',
+    backgroundColor: '#1a8a6e',
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+  },
+  nextChipText: {
+    color: '#fff',
+    fontSize: 10,
     fontWeight: '700',
-  },
-  error: {
-    color: '#C0392B',
-    backgroundColor: colors.redLight,
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 12,
-    fontSize: 12,
-  },
-  currentCard: {
-    borderWidth: 1.5,
-    borderColor: colors.green,
-    borderRadius: radius.lg,
-    backgroundColor: colors.greenLight,
-    padding: 20,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  sectionTitle: {
-    fontSize: 12,
-    color: colors.soft,
-    textTransform: 'uppercase',
     letterSpacing: 1,
-    fontWeight: '700',
-    marginBottom: 8,
+    textTransform: 'uppercase',
   },
-  currentNumber: {
-    fontSize: 64,
-    lineHeight: 70,
-    fontWeight: '800',
-    color: colors.greenDark,
-  },
-  listCard: {
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    backgroundColor: colors.white,
-    padding: 14,
-  },
-  upcomingWrap: {
-    gap: 8,
-  },
-  upcomingItem: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  upcomingText: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.ink,
-    textAlign: 'center',
-  },
-  empty: {
-    color: colors.soft,
+
+  emptyText: {
+    color: '#6b8e86',
     textAlign: 'center',
     paddingVertical: 16,
     fontSize: 13,
+  },
+
+  footer: {
+    backgroundColor: '#0f1c18',
+    paddingHorizontal: 28,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  footerMsg: {
+    color: 'rgba(255,255,255,.4)',
+    fontSize: 12,
+  },
+  footerPowered: {
+    color: 'rgba(255,255,255,.2)',
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
 });

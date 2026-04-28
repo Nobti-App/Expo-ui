@@ -55,7 +55,7 @@ type TicketRow = {
 export function EstabDashboardScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { authUserId } = useAppState();
+  const { authUserId, setAuthSession } = useAppState();
 
   const [establishment, setEstablishment] = useState<EstablishmentRow | null>(null);
   const [waiting, setWaiting] = useState(0);
@@ -154,6 +154,27 @@ export function EstabDashboardScreen() {
     }
   }, [authUserId]);
 
+  const handleLogout = useCallback(async () => {
+    try {
+      setError('');
+
+      await supabase.auth.signOut();
+      setAuthSession(null, null);
+
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const keysToRemove = Object.keys(window.localStorage).filter(
+          (key) => key.startsWith('sb-') && key.endsWith('-auth-token')
+        );
+
+        keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+      }
+
+      router.replace('/establishment/auth');
+    } catch (logoutError) {
+      setError(logoutError instanceof Error ? logoutError.message : 'Impossible de se déconnecter.');
+    }
+  }, [router, setAuthSession]);
+
   useEffect(() => {
     let active = true;
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -187,8 +208,15 @@ export function EstabDashboardScreen() {
   return (
     <AppShell>
       <View style={styles.top}>
-        <NobtiLogo size={32} showWordmark />
-        <Text style={styles.topSub}>Tableau de bord</Text>
+        <View>
+          <NobtiLogo size={32} showWordmark />
+          <Text style={styles.topSub}>Tableau de bord</Text>
+        </View>
+
+        <Pressable style={({ pressed }) => [styles.logoutButton, pressed && { opacity: 0.9 }]} onPress={handleLogout}>
+          <Feather name="log-out" size={16} color="#fff" />
+          <Text style={styles.logoutText}>Déconnexion</Text>
+        </Pressable>
       </View>
 
       <View style={styles.profile}>
@@ -262,8 +290,22 @@ function Stat({ v, l, color, isLoading }: { v: string; l: string; color: string;
 }
 
 const styles = StyleSheet.create({
-  top: { marginBottom: 12 },
+  top: { marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   topSub: { marginTop: 4, fontSize: 12, color: colors.soft },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+  },
+  logoutText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   profile: {
     backgroundColor: colors.blue,
     borderRadius: 16,
