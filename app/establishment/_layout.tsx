@@ -50,7 +50,7 @@ export default function EstablishmentLayoutGuard() {
   const isPublic = isPublicEstablishmentRoute(pathname);
 
   if (!authenticated && !isPublic) {
-    return <Redirect href="/" />;
+    return <Redirect href="/establishment/auth" />;
   }
 
   return <Slot />;

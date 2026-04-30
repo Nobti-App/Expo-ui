@@ -184,7 +184,9 @@ export async function fetchJoinTicketSnapshot(ticketId: string) {
 
 async function createTicketWithFallbackNumber(queueId: string, userId: string, holderName?: string) {
   const queue = await fetchQueueRow(queueId);
-  const nextNumber = (queue.last_issued_number ?? 0) + 1;
+  let nextNumber = (queue.last_issued_number ?? 0) + 1;
+  // wrap after 99 back to 0
+  if (nextNumber > 99) nextNumber = 0;
 
   const { error: queueUpdateError } = await supabase.from('queues').update({ last_issued_number: nextNumber }).eq('id', queueId);
   if (queueUpdateError) throw new Error(queueUpdateError.message);
@@ -262,6 +264,31 @@ export async function createQueueTicket(queueId: string, _accessToken: string, u
     throw new Error('Ticket creation failed.');
   }
 
+  // After insertion, fetch the raw ticket to ensure ticket_number didn't overflow
+  const { data: createdTicket, error: createdError } = await supabase
+    .from('tickets')
+    .select('ticket_number, display_number')
+    .eq('id', data.id)
+    .maybeSingle<{ ticket_number: number | null; display_number: string | null }>();
+
+  if (createdError) throw new Error(createdError.message);
+
+  if (createdTicket?.ticket_number != null && createdTicket.ticket_number > 99) {
+    // Wrap: set queue last_issued_number to 0 and update this ticket to 0
+    const queue = await fetchQueueRow(queueId);
+
+    const { error: qErr } = await supabase.from('queues').update({ last_issued_number: 0 }).eq('id', queueId);
+    if (qErr) throw new Error(qErr.message);
+
+    const newDisplay = `${queue.prefix?.trim() ?? ''}0`;
+    const { error: tErr } = await supabase
+      .from('tickets')
+      .update({ ticket_number: 0, display_number: newDisplay })
+      .eq('id', data.id);
+
+    if (tErr) throw new Error(tErr.message);
+  }
+
   return fetchJoinTicketSnapshot(data.id);
 }
 
@@ -319,10 +346,14 @@ export function connectQueueProgressSocket(
   ticketId: string,
   accessToken: string,
   onEvent: (event: QueueProgressEvent) => void,
-  onError: (error: Error) => void
+  onError: (error: Error) => void,
+  onConnectionStateChange?: (state: 'connected' | 'reconnecting' | 'disconnected') => void
 ) {
   let active = true;
   let channel: ReturnType<typeof supabase.channel> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempt = 0;
+  const maxReconnectDelayMs = 15000;
 
   const emitLatest = async () => {
     try {
@@ -335,18 +366,49 @@ export function connectQueueProgressSocket(
     }
   };
 
-  const fallbackInterval = setInterval(() => {
-    if (!active) return;
-    void emitLatest();
-  }, 4000);
+  const clearReconnectTimer = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
 
-  void (async () => {
+  const cleanupChannel = () => {
+    if (channel) {
+      supabase.removeChannel(channel);
+      channel = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (!active) return;
+
+    cleanupChannel();
+    clearReconnectTimer();
+    onConnectionStateChange?.('reconnecting');
+
+    const delay = Math.min(1000 * 2 ** reconnectAttempt, maxReconnectDelayMs);
+    reconnectAttempt += 1;
+
+    reconnectTimer = setTimeout(() => {
+      if (!active) return;
+      void connect();
+    }, delay);
+  };
+
+  const connect = async () => {
+    if (!active) return;
+
     try {
       await supabase.realtime.setAuth(accessToken);
     } catch {
+      // Keep trying to reconnect even if auth refresh temporarily fails.
     }
 
     if (!active) return;
+
+    cleanupChannel();
+    onConnectionStateChange?.('connected');
 
     channel = supabase
       .channel(`join-ticket:${queueId}:${ticketId}`)
@@ -370,21 +432,32 @@ export function connectQueueProgressSocket(
         if (!active) return;
 
         if (status === 'SUBSCRIBED') {
+          reconnectAttempt = 0;
+          clearReconnectTimer();
           void emitLatest();
           return;
         }
 
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          onError(new Error('Realtime subscription failed.'));
+          scheduleReconnect();
         }
       });
-  })();
+  };
+
+  const fallbackInterval = setInterval(() => {
+    if (!active) return;
+    void emitLatest();
+  }, 4000);
+
+  void connect();
 
   void emitLatest();
 
   return () => {
     active = false;
+    clearReconnectTimer();
     clearInterval(fallbackInterval);
-    if (channel) supabase.removeChannel(channel);
+    cleanupChannel();
+    onConnectionStateChange?.('disconnected');
   };
 }

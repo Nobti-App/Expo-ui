@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, Modal, Pressable, StyleSheet, Text, TextInput, View, Alert, Platform } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
@@ -114,7 +114,7 @@ export function EstabQueuesScreen() {
         .select('id, queue_id, display_number, ticket_number, holder_name, created_at, status')
         .in('queue_id', queueIds)
         .in('status', ['waiting', 'calling', 'completed'])
-        .order('ticket_number', { ascending: true })
+        .order('created_at', { ascending: true })
         .returns<TicketRow[]>();
 
       if (ticketError) throw ticketError;
@@ -247,7 +247,8 @@ export function EstabQueuesScreen() {
       const prefix = queueData?.prefix || '';
 
       const lastNumber = queueData?.last_issued_number ?? 0;
-      const nextTicketNumber = lastNumber + 1;
+      let nextTicketNumber = lastNumber + 1;
+      if (nextTicketNumber > 99) nextTicketNumber = 0;
       const displayNum = `${prefix}${nextTicketNumber}`;
 
       const { error: queueUpdateError } = await supabase
@@ -282,6 +283,67 @@ export function EstabQueuesScreen() {
       setActionLoading(false);
     }
   }, [selectedQueueId, manualTicketName, queues, fetchSnapshot]);
+
+  const resetLastIssued = useCallback(async () => {
+    if (!selectedQueueId) {
+      setError('Veuillez sélectionner une file.');
+      return;
+    }
+
+    try {
+      // prevent reset if there are active tickets
+      const { count: activeCount, error: countError } = await supabase
+        .from('tickets')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_id', selectedQueueId)
+        .in('status', ['waiting', 'calling']);
+
+      if (countError) throw countError;
+      if ((activeCount ?? 0) > 0) {
+        if (Platform.OS === 'web') {
+          window.alert("Impossible de réinitialiser : la file contient encore des tickets en attente ou en cours.");
+        } else {
+          Alert.alert('Impossible de réinitialiser', "La file contient encore des tickets en attente ou en cours.");
+        }
+        return;
+      }
+
+      const doReset = async () => {
+      try {
+        setActionLoading(true);
+        setError('');
+
+        const { error: updateError } = await supabase
+          .from('queues')
+          .update({ last_issued_number: 0 })
+          .eq('id', selectedQueueId);
+
+        if (updateError) throw updateError;
+
+        await fetchSnapshot();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Impossible de réinitialiser la file.';
+        setError(message);
+      } finally {
+        setActionLoading(false);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm("Cette action remettra le dernier numéro émis à 0 pour cette file. Confirmer ?");
+      if (confirmed) await doReset();
+      return;
+    }
+
+    Alert.alert('Réinitialiser la file', "Cette action remettra le dernier numéro émis à 0 pour cette file. Confirmer ?", [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Réinitialiser', style: 'destructive', onPress: () => { void doReset(); } },
+    ]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur lors de la vérification avant réinitialisation.';
+      setError(message);
+    }
+  }, [selectedQueueId, fetchSnapshot]);
 
   const selectedQueueName = useMemo(() => {
     return queues.find((queue) => queue.id === selectedQueueId)?.name ?? 'File';
@@ -327,6 +389,14 @@ export function EstabQueuesScreen() {
           variant="outline"
           onPress={() => setShowManualTicketModal(true)}
           disabled={actionLoading || !selectedQueueId}
+          style={{ flex: 1 }}
+        />
+        <PrimaryButton
+          label="Réinitialiser dernier n°"
+          variant="danger"
+          onPress={resetLastIssued}
+          disabled={actionLoading || !selectedQueueId }
+          style={{ flex: 1 }}
         />
       </View>
 

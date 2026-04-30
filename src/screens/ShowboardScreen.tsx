@@ -2,8 +2,8 @@ import { useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ensureAnonymousSession } from '../lib/api/joinQueue';
 import { supabase } from '@/src/lib/supabase';
+import { ensureAnonymousSession } from '../lib/api/joinQueue';
 
 type TicketStatus = 'waiting' | 'calling' | 'completed' | 'cancelled' | 'no_show' | null;
 
@@ -66,10 +66,10 @@ export function ShowboardScreen() {
         supabase.from('queues').select('name, establishment_id, prefix, avg_wait_minutes').eq('id', queueId).maybeSingle<QueueRow>(),
         supabase
           .from('tickets')
-          .select('id, display_number, ticket_number, status, holder_name')
+          .select('id, display_number, ticket_number, status, holder_name, created_at')
           .eq('queue_id', queueId)
           .in('status', ['calling', 'waiting'])
-          .order('ticket_number', { ascending: true })
+          .order('created_at', { ascending: true })
           .returns<TicketRow[]>(),
       ]);
 
@@ -198,6 +198,7 @@ export function ShowboardScreen() {
             </Animated.Text>
             <View style={styles.ticketDivider} />
             <View style={styles.ticketDetails}>
+              <Text style={styles.ticketNowLabel}>Appelé maintenant</Text>
               <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
               <View style={styles.ticketMeta}>
                 <View style={styles.counterBadge}>
@@ -240,11 +241,11 @@ export function ShowboardScreen() {
             ) : upcomingTickets.length === 0 ? (
               <Text style={styles.emptyText}>Aucun numéro en attente</Text>
             ) : (
-              upcomingTickets.slice(0, 8).map((ticket, idx) => (
+              upcomingTickets.slice(0, 4).map((ticket, idx) => (
                 <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
-                  <Text style={styles.queuePos}>{idx + 1}</Text>
-                  <Text style={styles.queueTicket}>{normalizeDisplayNumber(ticket)}</Text>
-                  <Text style={styles.queueName}>{ticket.holder_name || 'N/A'}</Text>
+                  {/* <Text style={styles.queuePos}>{idx + 1}</Text> */}
+                  <Text style={styles.queuePos}>{normalizeDisplayNumber(ticket)}</Text>
+                  <Text style={styles.queueName}>{ticket.holder_name || ''}</Text>
                   {idx === 0 && <View style={styles.nextChip}><Text style={styles.nextChipText}>Suivant</Text></View>}
                 </View>
               ))
@@ -344,33 +345,45 @@ const styles = StyleSheet.create({
   ticketDisplay: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 28,
+    gap: 32,
+    minHeight: 150,
   },
   ticketNumber: {
-    fontSize: 96,
+    fontSize: 118,
     fontWeight: '800',
     color: '#0d5c4a',
     letterSpacing: 2,
-    lineHeight: 96,
+    lineHeight: 118,
+    minWidth: 170,
+    textAlign: 'center',
   },
   ticketDivider: {
     width: 3,
-    height: 80,
+    height: 110,
     backgroundColor: '#d4e4e0',
     borderRadius: 2,
   },
   ticketDetails: {
     flex: 1,
+    justifyContent: 'center',
+  },
+  ticketNowLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1a8a6e',
+    textTransform: 'uppercase',
+    letterSpacing: 1.4,
+    marginBottom: 6,
   },
   ticketName: {
-    fontSize: 42,
+    fontSize: 48,
     fontWeight: '700',
     color: '#0f1c18',
     letterSpacing: -1,
-    lineHeight: 46,
+    lineHeight: 52,
   },
   ticketMeta: {
-    marginTop: 8,
+    marginTop: 12,
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
@@ -469,9 +482,9 @@ const styles = StyleSheet.create({
   },
   queueTicket: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#0f1c18',
-    minWidth: 48,
+    minWidth: 52,
     fontVariant: ['tabular-nums'],
   },
   queueName: {

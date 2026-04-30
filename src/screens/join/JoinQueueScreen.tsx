@@ -19,6 +19,8 @@ import {
 import { useAppState } from '@/src/state/AppContext';
 import { colors, radius } from '@/src/theme/colors';
 
+type ConnectionState = 'connected' | 'reconnecting' | 'disconnected';
+
 function splitTicketDisplay(displayNumber: string) {
   const value = displayNumber.trim();
   const match = value.match(/^([^\d]+)?(\d+.*)?$/);
@@ -49,6 +51,7 @@ export function JoinQueueScreen() {
   const [error, setError] = useState('');
   const [holderName, setHolderName] = useState('');
   const [treatedMessage, setTreatedMessage] = useState('');
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connected');
 
   const stopSocketRef = useRef<(() => void) | null>(null);
 
@@ -137,7 +140,8 @@ export function JoinQueueScreen() {
           },
           (wsError: Error) => {
             setError(wsError.message);
-          }
+          },
+          setConnectionState
         );
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to join queue.');
@@ -206,6 +210,13 @@ export function JoinQueueScreen() {
 
       {loading && <Text style={styles.state}>Création de votre ticket...</Text>}
       {!!error && <Text style={styles.error}>{error}</Text>}
+      {connectionState !== 'connected' && !treatedMessage && (
+        <View style={[styles.connectionBanner, connectionState === 'reconnecting' ? styles.connectionBannerReconnecting : styles.connectionBannerDisconnected]}>
+          <Text style={styles.connectionText}>
+            {connectionState === 'reconnecting' ? 'Connexion en cours…' : 'Connexion perdue'}
+          </Text>
+        </View>
+      )}
 
       {!!treatedMessage && (
         <View style={styles.treatedBox}>
@@ -306,6 +317,28 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 8,
     fontSize: 12,
+  },
+  connectionBanner: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  connectionBannerReconnecting: {
+    backgroundColor: colors.amberLight,
+    borderWidth: 1,
+    borderColor: '#E6B95A',
+  },
+  connectionBannerDisconnected: {
+    backgroundColor: colors.redLight,
+    borderWidth: 1,
+    borderColor: '#E8A3A3',
+  },
+  connectionText: {
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.ink,
   },
   treatedBox: {
     borderWidth: 1.5,
