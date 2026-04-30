@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '@/src/components/AppHeader';
@@ -31,6 +31,20 @@ export function EstabSignupScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    setAuthSession(null, null);
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const keysToRemove = Object.keys(window.localStorage).filter(
+        (key) => key.startsWith('sb-') && key.endsWith('-auth-token')
+      );
+
+      keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+    }
+
+    supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+  }, [setAuthSession]);
 
   const disabled = useMemo(
     () => loading || !email.trim() || !password.trim() || !name.trim(),

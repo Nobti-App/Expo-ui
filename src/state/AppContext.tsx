@@ -1,12 +1,14 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 
 import { BASE_QUEUES, ESTABS } from '@/src/data/mockData';
+import { supabase } from '@/src/lib/supabase';
 import { Establishment, MyTicket, PayMethod, PayOption, QueueMap } from '@/src/types';
 import { cloneQueues, fmtTime } from '@/src/utils/queue';
 
 type AppContextValue = {
   authSessionToken: string | null;
   authUserId: string | null;
+  authReady: boolean;
   setAuthSession: (token: string | null, userId: string | null) => void;
   estabs: Establishment[];
   queues: QueueMap;
@@ -38,12 +40,41 @@ const AppContext = createContext<AppContextValue | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authSessionToken, setAuthSessionToken] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [queues, setQueues] = useState<QueueMap>(() => cloneQueues(BASE_QUEUES));
   const [curEstabId, setCurEstabId] = useState(0);
   const [myTicket, setMyTicket] = useState<MyTicket | null>(null);
   const [payOption, setPayOption] = useState<PayOption>('vip1');
   const [payMethod, setPayMethod] = useState<PayMethod>('cmi');
   const [curQueue, setCurQueue] = useState('A');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const hydrateAuth = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+
+      setAuthSession(data.session?.access_token ?? null, data.session?.user?.id ?? null);
+      setAuthReady(true);
+    };
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session?.access_token ?? null, session?.user?.id ?? null);
+      setAuthReady(true);
+    });
+
+    hydrateAuth().catch(() => {
+      if (!mounted) return;
+      setAuthSession(null, null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const qWait = (k: string) => (queues[k] || []).filter((t) => t.s === 'waiting' || t.s === 'current').length;
   const qDone = (k: string) => (queues[k] || []).filter((t) => t.s === 'done').length;
@@ -147,6 +178,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value: AppContextValue = {
     authSessionToken,
     authUserId,
+    authReady,
     setAuthSession,
     estabs: ESTABS,
     queues,

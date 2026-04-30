@@ -55,7 +55,7 @@ type TicketRow = {
 export function EstabDashboardScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { authUserId, setAuthSession } = useAppState();
+  const { authUserId, authReady, setAuthSession } = useAppState();
 
   const [establishment, setEstablishment] = useState<EstablishmentRow | null>(null);
   const [waiting, setWaiting] = useState(0);
@@ -180,6 +180,14 @@ export function EstabDashboardScreen() {
     let channel: ReturnType<typeof supabase.channel> | null = null;
 
     const init = async () => {
+      if (!authReady) return;
+
+      if (!authUserId) {
+        router.replace('/establishment/auth');
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       await fetchSnapshot();
       if (!active || !authUserId) return;
@@ -203,7 +211,7 @@ export function EstabDashboardScreen() {
       active = false;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [authUserId, fetchSnapshot]);
+  }, [authReady, authUserId, fetchSnapshot, router]);
 
   return (
     <AppShell>
