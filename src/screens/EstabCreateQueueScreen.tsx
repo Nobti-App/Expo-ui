@@ -17,6 +17,13 @@ function parseMaxTickets(value: string) {
   return Math.max(1, parsed);
 }
 
+function parseAvgWait(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, parsed);
+}
+
 export function EstabCreateQueueScreen() {
   const router = useRouter();
   const [queues, setQueues] = useState<QueueEntity[]>([]);
@@ -24,6 +31,7 @@ export function EstabCreateQueueScreen() {
   const [name, setName] = useState('');
   const [prefix, setPrefix] = useState('');
   const [maxTickets, setMaxTickets] = useState('');
+  const [avgWaitMinutes, setAvgWaitMinutes] = useState('');
   const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
   const [visibleQrQueueId, setVisibleQrQueueId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +44,7 @@ export function EstabCreateQueueScreen() {
     setName('');
     setPrefix('A');
     setMaxTickets('');
+    setAvgWaitMinutes('');
   }, []);
 
   const loadQueues = useCallback(async () => {
@@ -109,6 +118,7 @@ export function EstabCreateQueueScreen() {
         name: trimmedName,
         prefix,
         max_tickets: parseMaxTickets(maxTickets),
+        avg_wait_minutes: parseAvgWait(avgWaitMinutes),
       };
 
       if (editingQueueId) {
@@ -180,6 +190,15 @@ export function EstabCreateQueueScreen() {
           placeholder="Ex : 100"
         />
 
+        <Text style={[styles.label, { marginTop: 10 }]}>Avg wait (minutes)</Text>
+        <TextInput
+          value={avgWaitMinutes}
+          onChangeText={setAvgWaitMinutes}
+          style={styles.input}
+          keyboardType="number-pad"
+          placeholder="Ex : 5"
+        />
+
         <PrimaryButton label={saving ? 'Enregistrement...' : submitLabel} onPress={onSubmit} disabled={saving || !name.trim()} />
         {editingQueueId && <PrimaryButton label="Annuler la modification" variant="outline" onPress={resetForm} />}
       </View>
@@ -210,7 +229,7 @@ export function EstabCreateQueueScreen() {
                 <Text style={styles.prefixBadge}>{queue.prefix}</Text>
               </View>
 
-              <Text style={styles.queueMeta}>{`Max tickets: ${maxTicketsLabel}`}</Text>
+              <Text style={styles.queueMeta}>{`Max tickets: ${maxTicketsLabel} · Avg wait: ${queue.avg_wait_minutes ?? '—'} min`}</Text>
 
               <View style={styles.queueActions}>
                 <PrimaryButton
@@ -220,8 +239,9 @@ export function EstabCreateQueueScreen() {
                   onPress={() => {
                     setEditingQueueId(queue.id);
                     setName(queue.name);
-                    setPrefix(queue.prefix || 'A');
-                    setMaxTickets(queue.max_tickets ? String(queue.max_tickets) : '');
+                    setPrefix(queue.prefix || '');
+                      setMaxTickets(queue.max_tickets ? String(queue.max_tickets) : '');
+                      setAvgWaitMinutes(queue.avg_wait_minutes ? String(queue.avg_wait_minutes) : '');
                     setVisibleQrQueueId(null);
                   }}
                 />

@@ -7,6 +7,7 @@ export type QueueEntity = {
   prefix: string;
   is_open: boolean;
   max_tickets: number | null;
+  avg_wait_minutes: number | null;
   updated_at: string | null;
 };
 
@@ -15,12 +16,13 @@ type UpsertQueuePayload = {
   name: string;
   prefix: string;
   max_tickets: number | null;
+  avg_wait_minutes?: number | null;
 };
 
 export async function listQueues(): Promise<QueueEntity[]> {
   const { data, error } = await supabase
     .from('queues')
-    .select('id, establishment_id, name, prefix, is_open, max_tickets, updated_at')
+    .select('id, establishment_id, name, prefix, is_open, max_tickets, avg_wait_minutes, updated_at')
     .returns<QueueEntity[]>();
 
   if (error) {
@@ -39,6 +41,7 @@ export async function createQueue(payload: UpsertQueuePayload): Promise<QueueEnt
         name: payload.name,
         prefix: payload.prefix,
         max_tickets: payload.max_tickets,
+        avg_wait_minutes: payload.avg_wait_minutes ?? null,
         is_open: true,
       },
     ])
@@ -59,6 +62,7 @@ export async function updateQueue(queueId: string, payload: UpsertQueuePayload):
       name: payload.name,
       prefix: payload.prefix,
       max_tickets: payload.max_tickets,
+      avg_wait_minutes: payload.avg_wait_minutes ?? null,
     })
     .eq('id', queueId)
     .select()
