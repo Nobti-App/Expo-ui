@@ -47,7 +47,7 @@ export type PublicQueueDetails = {
   establishmentName: string;
 };
 
-export const JOIN_SESSION_RESET_REQUIRED = 'JOIN_SESSION_RESET_REQUIRED';
+let anonymousSessionPromise: Promise<{ accessToken: string; userId: string }> | null = null;
 
 export async function ensureAnonymousSession() {
   const currentSessionResult = await supabase.auth.getSession();
@@ -60,34 +60,53 @@ export async function ensureAnonymousSession() {
     };
   }
 
-  const anonResult = await supabase.auth.signInAnonymously();
-  if (anonResult.error) {
-    throw new Error(anonResult.error.message);
+  if (anonymousSessionPromise) {
+    return anonymousSessionPromise;
   }
 
-  const anonSession = anonResult.data.session;
-  if (!anonSession?.access_token || !anonSession.user?.id) {
-    throw new Error('Anonymous session was not returned by Supabase.');
-  }
+  anonymousSessionPromise = (async () => {
+    const anonResult = await supabase.auth.signInAnonymously();
+    if (anonResult.error) {
+      throw new Error(anonResult.error.message);
+    }
 
-  return {
-    accessToken: anonSession.access_token,
-    userId: anonSession.user.id,
-  };
+    const anonSession = anonResult.data.session;
+    if (!anonSession?.access_token || !anonSession.user?.id) {
+      throw new Error('Anonymous session was not returned by Supabase.');
+    }
+
+    return {
+      accessToken: anonSession.access_token,
+      userId: anonSession.user.id,
+    };
+  })();
+
+  try {
+    return await anonymousSessionPromise;
+  } finally {
+    anonymousSessionPromise = null;
+  }
+}
+
+async function findLatestActiveUserTicketInQueue(queueId: string, userId: string) {
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('id, queue_id, ticket_number, display_number, status, holder_name')
+    .eq('queue_id', queueId)
+    .eq('user_id', userId)
+    .in('status', ['waiting', 'calling'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle<TicketRow>();
+
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 function mapStatus(rawStatus: DbTicketStatus): JoinTicket['status'] {
   if (rawStatus === 'completed' || rawStatus === 'done') return 'done';
   if (rawStatus === 'calling' || rawStatus === 'cancelled' || rawStatus === 'no_show') return rawStatus;
   return 'waiting';
-}
-
-function isActiveStatus(status: JoinTicket['status']) {
-  return status === 'waiting' || status === 'calling';
-}
-
-function isTerminalStatus(status: JoinTicket['status']) {
-  return status === 'done' || status === 'cancelled' || status === 'no_show';
 }
 
 function computeProgress(status: JoinTicket['status'], beforeCount: number, totalActive: number) {
@@ -182,114 +201,43 @@ export async function fetchJoinTicketSnapshot(ticketId: string) {
   return buildJoinTicket(ticket);
 }
 
-async function createTicketWithFallbackNumber(queueId: string, userId: string, holderName?: string) {
-  const queue = await fetchQueueRow(queueId);
-  let nextNumber = (queue.last_issued_number ?? 0) + 1;
-  // wrap after 99 back to 0
-  if (nextNumber > 99) nextNumber = 0;
+export async function createNewTicket(queueId: string): Promise<JoinTicket> {
+  const { data, error } = await supabase.rpc('create_new_ticket', { p_queue_id: queueId });
 
-  const { error: queueUpdateError } = await supabase.from('queues').update({ last_issued_number: nextNumber }).eq('id', queueId);
-  if (queueUpdateError) throw new Error(queueUpdateError.message);
+  if (error) {
+    throw new Error(error.message || 'Impossible de créer le ticket.');
+  }
 
-  const displayNumber = `${queue.prefix?.trim() ?? ''}${nextNumber}`;
+  const createdTicket = Array.isArray(data) ? data[0] : data;
+  const ticketId = createdTicket?.id;
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .insert({
-      queue_id: queueId,
-      user_id: userId,
-      holder_name: holderName?.trim() ? holderName.trim() : null,
-      ticket_number: nextNumber,
-      display_number: displayNumber,
-      status: 'waiting',
-    })
-    .select('id')
-    .maybeSingle<{ id: string }>();
+  if (!ticketId || typeof ticketId !== 'string') {
+    throw new Error('Ticket creation failed.');
+  }
 
-  if (error) throw new Error(error.message);
-  if (!data?.id) throw new Error('Ticket creation failed.');
-
-  return fetchJoinTicketSnapshot(data.id);
-}
-
-async function findLatestUserTicketInQueue(queueId: string, userId: string) {
-  const { data, error } = await supabase
-    .from('tickets')
-    .select('id, queue_id, ticket_number, display_number, status, holder_name')
-    .eq('queue_id', queueId)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle<TicketRow>();
-
-  if (error) throw new Error(error.message);
-  return data;
+  return fetchJoinTicketSnapshot(ticketId);
 }
 
 export async function createQueueTicket(queueId: string, _accessToken: string, userId: string, holderName?: string) {
-  const existingTicket = await findLatestUserTicketInQueue(queueId, userId);
+  const existingTicket = await findLatestActiveUserTicketInQueue(queueId, userId);
 
   if (existingTicket) {
     const existing = await buildJoinTicket(existingTicket);
 
-    if (isActiveStatus(existing.status)) {
-      if (holderName?.trim() && holderName.trim() !== (existing.holderName ?? '')) {
-        return updateTicketHolderName(existing.ticketId, holderName);
-      }
-
-      return existing;
+    if (holderName?.trim() && holderName.trim() !== (existing.holderName ?? '')) {
+      return updateTicketHolderName(existing.ticketId, holderName);
     }
 
-    if (isTerminalStatus(existing.status)) {
-      throw new Error(JOIN_SESSION_RESET_REQUIRED);
-    }
+    return existing;
   }
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .insert({
-      queue_id: queueId,
-      user_id: userId,
-      holder_name: holderName?.trim() ? holderName.trim() : null,
-      status: 'waiting',
-    })
-    .select('id')
-    .maybeSingle<{ id: string }>();
+  const createdTicket = await createNewTicket(queueId);
 
-  if (error) {
-    return createTicketWithFallbackNumber(queueId, userId, holderName);
+  if (holderName?.trim() && holderName.trim() !== (createdTicket.holderName ?? '')) {
+    return updateTicketHolderName(createdTicket.ticketId, holderName);
   }
 
-  if (!data?.id) {
-    throw new Error('Ticket creation failed.');
-  }
-
-  // After insertion, fetch the raw ticket to ensure ticket_number didn't overflow
-  const { data: createdTicket, error: createdError } = await supabase
-    .from('tickets')
-    .select('ticket_number, display_number')
-    .eq('id', data.id)
-    .maybeSingle<{ ticket_number: number | null; display_number: string | null }>();
-
-  if (createdError) throw new Error(createdError.message);
-
-  if (createdTicket?.ticket_number != null && createdTicket.ticket_number > 99) {
-    // Wrap: set queue last_issued_number to 0 and update this ticket to 0
-    const queue = await fetchQueueRow(queueId);
-
-    const { error: qErr } = await supabase.from('queues').update({ last_issued_number: 0 }).eq('id', queueId);
-    if (qErr) throw new Error(qErr.message);
-
-    const newDisplay = `${queue.prefix?.trim() ?? ''}0`;
-    const { error: tErr } = await supabase
-      .from('tickets')
-      .update({ ticket_number: 0, display_number: newDisplay })
-      .eq('id', data.id);
-
-    if (tErr) throw new Error(tErr.message);
-  }
-
-  return fetchJoinTicketSnapshot(data.id);
+  return createdTicket;
 }
 
 export async function updateTicketHolderName(ticketId: string, holderName: string) {

@@ -11,7 +11,6 @@ import {
   connectQueueProgressSocket,
   createQueueTicket,
   ensureAnonymousSession,
-  JOIN_SESSION_RESET_REQUIRED,
   JoinTicket,
   QueueProgressEvent,
   updateTicketHolderName,
@@ -54,6 +53,8 @@ export function JoinQueueScreen() {
   const [connectionState, setConnectionState] = useState<ConnectionState>('connected');
 
   const stopSocketRef = useRef<(() => void) | null>(null);
+  const initRunningRef = useRef(false);
+  const initializedQueueRef = useRef<string | null>(null);
 
   const clearAnonymousSession = async () => {
     if (stopSocketRef.current) {
@@ -85,34 +86,27 @@ export function JoinQueueScreen() {
     let active = true;
 
     const init = async () => {
+      if (!queueId) {
+        setError('Queue ID is missing from the QR link.');
+        setLoading(false);
+        return;
+      }
+
+      if (initRunningRef.current || initializedQueueRef.current === queueId) {
+        return;
+      }
+
+      initRunningRef.current = true;
+
       try {
         setLoading(true);
         setError('');
 
-        if (!queueId) {
-          setError('Queue ID is missing from the QR link.');
-          return;
-        }
-
-        let session = await ensureAnonymousSession();
+        const session = await ensureAnonymousSession();
         if (!active) return;
 
-        let createdTicket: JoinTicket;
-        try {
-          createdTicket = await createQueueTicket(queueId, session.accessToken, session.userId);
-        } catch (ticketCreationError) {
-          if (!(ticketCreationError instanceof Error) || ticketCreationError.message !== JOIN_SESSION_RESET_REQUIRED) {
-            throw ticketCreationError;
-          }
-
-          await supabase.auth.signOut({ scope: 'local' });
-          session = await ensureAnonymousSession();
-          if (!active) return;
-
-          createdTicket = await createQueueTicket(queueId, session.accessToken, session.userId);
-        }
-
         setAuthSession(session.accessToken, session.userId);
+        const createdTicket = await createQueueTicket(queueId, session.accessToken, session.userId);
         if (!active) return;
 
         if (isTreatedStatus(createdTicket.status)) {
@@ -143,9 +137,12 @@ export function JoinQueueScreen() {
           },
           setConnectionState
         );
+
+        initializedQueueRef.current = queueId;
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to join queue.');
       } finally {
+        initRunningRef.current = false;
         if (active) setLoading(false);
       }
     };

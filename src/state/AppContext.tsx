@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 import { BASE_QUEUES, ESTABS } from '@/src/data/mockData';
 import { supabase } from '@/src/lib/supabase';
@@ -170,10 +170,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setQueues((prev) => ({ ...prev, [k]: [] }));
   };
 
-  const setAuthSession = (token: string | null, userId: string | null) => {
+  const setAuthSession = useCallback((token: string | null, userId: string | null) => {
     setAuthSessionToken(token);
     setAuthUserId(userId);
-  };
+  }, []);
 
   const value: AppContextValue = {
     authSessionToken,
