@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { supabase } from '@/src/lib/supabase';
 import { ensureAnonymousSession } from '../lib/api/joinQueue';
@@ -20,6 +20,7 @@ type QueueRow = {
   name: string | null;
   prefix: string | null;
   avg_wait_minutes: number | null;
+  iptv_link: string | null;
 };
 
 type EstablishmentRow = {
@@ -51,7 +52,12 @@ export function ShowboardScreen() {
   const [clock, setClock] = useState(getClockTime());
   const [servedCount, setServedCount] = useState(0);
   const [avgWaitMinutes, setAvgWaitMinutes] = useState<number | null>(null);
+  const [iptvLink, setIptvLink] = useState<string | null>(null);
   const pulse = React.useRef(new Animated.Value(1)).current;
+  const ReactPlayer = useMemo(() => {
+    if (Platform.OS !== 'web') return null;
+    return (require('react-player') as { default: React.ComponentType<any> }).default;
+  }, []);
 
   const fetchSnapshot = useCallback(async () => {
     if (!queueId) {
@@ -63,7 +69,11 @@ export function ShowboardScreen() {
     try {
       setError('');
       const [queueResponse, ticketsResponse] = await Promise.all([
-        supabase.from('queues').select('name, establishment_id, prefix, avg_wait_minutes').eq('id', queueId).maybeSingle<QueueRow>(),
+        supabase
+          .from('queues')
+          .select('name, establishment_id, prefix, avg_wait_minutes, iptv_link')
+          .eq('id', queueId)
+          .maybeSingle<QueueRow>(),
         supabase
           .from('tickets')
           .select('id, display_number, ticket_number, status, holder_name, created_at')
@@ -94,6 +104,7 @@ export function ShowboardScreen() {
       setEstablishmentName(estabData?.name ?? '');
       setQueuePrefix(queueData?.prefix ?? 'A');
       setAvgWaitMinutes(queueData?.avg_wait_minutes ?? null);
+      setIptvLink(queueData?.iptv_link ?? null);
 
       // Fetch served tickets from today
       const today = new Date();
@@ -168,6 +179,7 @@ export function ShowboardScreen() {
   }, []);
 
   const waitingCount = upcomingTickets.length;
+  const showIptvPlayer = Platform.OS === 'web' && !!iptvLink;
 
   return (
     <View style={styles.container}>
@@ -185,74 +197,161 @@ export function ShowboardScreen() {
         <Text style={styles.headerTime}>{clock}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.mainGrid} showsVerticalScrollIndicator={false}>
-        {/* Current ticket card */}
-        <View style={styles.currentCard}>
-          <Text style={styles.sectionLabel}>
-            <Text style={styles.pulseDot}>●</Text>
-            {' '}Numéro en cours
-          </Text>
-          <View style={styles.ticketDisplay}>
-            <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulse }] }]}>
-              {currentTicket ? normalizeDisplayNumber(currentTicket) : '--'}
-            </Animated.Text>
-            <View style={styles.ticketDivider} />
-            <View style={styles.ticketDetails}>
-              <Text style={styles.ticketNowLabel}>Appelé maintenant</Text>
-              <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
-              <View style={styles.ticketMeta}>
-                <View style={styles.counterBadge}>
-                  <Text style={styles.counterBadgeText}>{queueName || 'File'}</Text>
+      <View style={styles.body}>
+        {showIptvPlayer ? (
+          <View style={styles.dualLayout}>
+            <View style={styles.playerColumn}>
+              <View style={styles.playerFrame}>
+                {ReactPlayer ? (
+                  <ReactPlayer url={iptvLink as string} muted controls playing width="100%" height="100%" />
+                ) : (
+                  <Text style={styles.emptyText}>Lecteur indisponible</Text>
+                )}
+              </View>
+              <Text style={styles.playerLabel}>Live IPTV</Text>
+            </View>
+            <ScrollView
+              style={styles.rightColumn}
+              contentContainerStyle={styles.mainGrid}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Current ticket card */}
+              <View style={styles.currentCard}>
+                <Text style={styles.sectionLabel}>
+                  <Text style={styles.pulseDot}>●</Text>
+                  {' '}Numéro en cours
+                </Text>
+                <View style={styles.ticketDisplay}>
+                  <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulse }] }]}>
+                    {currentTicket ? normalizeDisplayNumber(currentTicket) : '--'}
+                  </Animated.Text>
+                  <View style={styles.ticketDivider} />
+                  <View style={styles.ticketDetails}>
+                    <Text style={styles.ticketNowLabel}>Appelé maintenant</Text>
+                    <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
+                    <View style={styles.ticketMeta}>
+                      <View style={styles.counterBadge}>
+                        <Text style={styles.counterBadgeText}>{queueName || 'File'}</Text>
+                      </View>
+                      <View style={styles.timeBadge}>
+                        <Text style={styles.timeBadgeText}>{clock}</Text>
+                      </View>
+                    </View>
+                  </View>
                 </View>
-                <View style={styles.timeBadge}>
-                  <Text style={styles.timeBadgeText}>{clock}</Text>
+              </View>
+
+              {/* Stats row */}
+              <View style={styles.statsRow}>
+                <View style={[styles.statCard, styles.statHighlight]}>
+                  <Text style={styles.statValue}>{waitingCount}</Text>
+                  <Text style={styles.statLabel}>En attente</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>{servedCount}</Text>
+                  <Text style={styles.statLabel}>Servis auj.</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
+                  <Text style={styles.statLabel}>Temps moyen par ticket</Text>
+                </View>
+              </View>
+
+              {/* Queue list */}
+              <View style={styles.queueSection}>
+                <Text style={styles.sectionLabel}>À appeler ensuite</Text>
+                <View style={styles.queueList}>
+                  {loading ? (
+                    <Text style={styles.emptyText}>Chargement...</Text>
+                  ) : upcomingTickets.length === 0 ? (
+                    <Text style={styles.emptyText}>Aucun numéro en attente</Text>
+                  ) : (
+                    upcomingTickets.slice(0, 4).map((ticket, idx) => (
+                      <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
+                        <Text style={styles.queuePos}>{normalizeDisplayNumber(ticket)}</Text>
+                        <Text style={styles.queueName}>{ticket.holder_name || ''}</Text>
+                        {idx === 0 && (
+                          <View style={styles.nextChip}>
+                            <Text style={styles.nextChipText}>Suivant</Text>
+                          </View>
+                        )}
+                      </View>
+                    ))
+                  )}
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.mainGrid} showsVerticalScrollIndicator={false}>
+            {/* Current ticket card */}
+            <View style={styles.currentCard}>
+              <Text style={styles.sectionLabel}>
+                <Text style={styles.pulseDot}>●</Text>
+                {' '}Numéro en cours
+              </Text>
+              <View style={styles.ticketDisplay}>
+                <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulse }] }]}>
+                  {currentTicket ? normalizeDisplayNumber(currentTicket) : '--'}
+                </Animated.Text>
+                <View style={styles.ticketDivider} />
+                <View style={styles.ticketDetails}>
+                  <Text style={styles.ticketNowLabel}>Appelé maintenant</Text>
+                  <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
+                  <View style={styles.ticketMeta}>
+                    <View style={styles.counterBadge}>
+                      <Text style={styles.counterBadgeText}>{queueName || 'File'}</Text>
+                    </View>
+                    <View style={styles.timeBadge}>
+                      <Text style={styles.timeBadgeText}>{clock}</Text>
+                    </View>
+                  </View>
                 </View>
               </View>
             </View>
-          </View>
-        </View>
 
-        {/* Stats row */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, styles.statHighlight]}>
-            <Text style={styles.statValue}>{waitingCount}</Text>
-            <Text style={styles.statLabel}>En attente</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{servedCount}</Text>
-            <Text style={styles.statLabel}>Servis auj.</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
-            <Text style={styles.statLabel}>Temps moyen par ticket</Text>
-          </View>
-          {/* <View style={styles.statCard}>
-            <Text style={styles.statValue}>1</Text>
-            <Text style={styles.statLabel}>Guichets actifs</Text>
-          </View> */}
-        </View>
+            {/* Stats row */}
+            <View style={styles.statsRow}>
+              <View style={[styles.statCard, styles.statHighlight]}>
+                <Text style={styles.statValue}>{waitingCount}</Text>
+                <Text style={styles.statLabel}>En attente</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{servedCount}</Text>
+                <Text style={styles.statLabel}>Servis auj.</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
+                <Text style={styles.statLabel}>Temps moyen par ticket</Text>
+              </View>
+            </View>
 
-        {/* Queue list */}
-        <View style={styles.queueSection}>
-          <Text style={styles.sectionLabel}>À appeler ensuite</Text>
-          <View style={styles.queueList}>
-            {loading ? (
-              <Text style={styles.emptyText}>Chargement...</Text>
-            ) : upcomingTickets.length === 0 ? (
-              <Text style={styles.emptyText}>Aucun numéro en attente</Text>
-            ) : (
-              upcomingTickets.slice(0, 4).map((ticket, idx) => (
-                <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
-                  {/* <Text style={styles.queuePos}>{idx + 1}</Text> */}
-                  <Text style={styles.queuePos}>{normalizeDisplayNumber(ticket)}</Text>
-                  <Text style={styles.queueName}>{ticket.holder_name || ''}</Text>
-                  {idx === 0 && <View style={styles.nextChip}><Text style={styles.nextChipText}>Suivant</Text></View>}
-                </View>
-              ))
-            )}
-          </View>
-        </View>
-      </ScrollView>
+            {/* Queue list */}
+            <View style={styles.queueSection}>
+              <Text style={styles.sectionLabel}>À appeler ensuite</Text>
+              <View style={styles.queueList}>
+                {loading ? (
+                  <Text style={styles.emptyText}>Chargement...</Text>
+                ) : upcomingTickets.length === 0 ? (
+                  <Text style={styles.emptyText}>Aucun numéro en attente</Text>
+                ) : (
+                  upcomingTickets.slice(0, 4).map((ticket, idx) => (
+                    <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
+                      <Text style={styles.queuePos}>{normalizeDisplayNumber(ticket)}</Text>
+                      <Text style={styles.queueName}>{ticket.holder_name || ''}</Text>
+                      {idx === 0 && (
+                        <View style={styles.nextChip}>
+                          <Text style={styles.nextChipText}>Suivant</Text>
+                        </View>
+                      )}
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+          </ScrollView>
+        )}
+      </View>
 
       {/* Footer */}
       <View style={styles.footer}>
@@ -309,9 +408,43 @@ const styles = StyleSheet.create({
   },
   headerTime: {
     color: 'rgba(255,255,255,0.55)',
-    fontSize: 14,
+    fontSize: 16,
     letterSpacing: 0.5,
     fontVariant: ['tabular-nums'],
+  },
+
+  body: {
+    flex: 1,
+  },
+  dualLayout: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 18,
+    paddingHorizontal: 22,
+    paddingVertical: 20,
+  },
+  playerColumn: {
+    flex: 1.15,
+    gap: 10,
+  },
+  playerFrame: {
+    flex: 1,
+    backgroundColor: '#0f1c18',
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#1a8a6e',
+    minHeight: 360,
+  },
+  playerLabel: {
+    color: '#6b8e86',
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    fontWeight: '700',
+  },
+  rightColumn: {
+    flex: 1,
   },
 
   mainGrid: {
@@ -325,12 +458,12 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#d4e4e0',
     borderRadius: 18,
-    paddingVertical: 28,
-    paddingHorizontal: 32,
+    paddingVertical: 32,
+    paddingHorizontal: 34,
     overflow: 'hidden',
   },
   sectionLabel: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -349,12 +482,12 @@ const styles = StyleSheet.create({
     minHeight: 150,
   },
   ticketNumber: {
-    fontSize: 118,
+    fontSize: 126,
     fontWeight: '800',
     color: '#0d5c4a',
     letterSpacing: 2,
-    lineHeight: 118,
-    minWidth: 170,
+    lineHeight: 126,
+    minWidth: 180,
     textAlign: 'center',
   },
   ticketDivider: {
@@ -368,7 +501,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ticketNowLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
     color: '#1a8a6e',
     textTransform: 'uppercase',
@@ -376,11 +509,11 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   ticketName: {
-    fontSize: 48,
+    fontSize: 56,
     fontWeight: '700',
     color: '#0f1c18',
     letterSpacing: -1,
-    lineHeight: 52,
+    lineHeight: 60,
   },
   ticketMeta: {
     marginTop: 12,
@@ -396,7 +529,7 @@ const styles = StyleSheet.create({
   },
   counterBadgeText: {
     color: '#0d5c4a',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     letterSpacing: 0.5,
   },
@@ -408,7 +541,7 @@ const styles = StyleSheet.create({
   },
   timeBadgeText: {
     color: '#c8952a',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     letterSpacing: 0.5,
     fontVariant: ['tabular-nums'],
@@ -431,13 +564,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#e6f4f1',
   },
   statValue: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: '700',
     color: '#0f1c18',
     letterSpacing: 1,
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#6b8e86',
     fontWeight: '500',
     letterSpacing: 0.5,
@@ -450,8 +583,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d4e4e0',
     borderRadius: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 20,
+    paddingHorizontal: 26,
+    paddingVertical: 24,
     marginBottom: 24,
   },
   queueList: {
@@ -462,8 +595,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     borderRadius: 10,
     backgroundColor: '#f7faf9',
     borderWidth: 1,
@@ -474,10 +607,10 @@ const styles = StyleSheet.create({
     borderColor: '#1a8a6e',
   },
   queuePos: {
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '700',
     color: '#6b8e86',
-    width: 32,
+    width: 55,
     textAlign: 'center',
   },
   queueTicket: {
@@ -488,7 +621,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   queueName: {
-    fontSize: 14,
+    fontSize: 18,
     color: '#0f1c18',
     fontWeight: '400',
   },
@@ -501,7 +634,7 @@ const styles = StyleSheet.create({
   },
   nextChipText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1,
     textTransform: 'uppercase',
@@ -511,7 +644,7 @@ const styles = StyleSheet.create({
     color: '#6b8e86',
     textAlign: 'center',
     paddingVertical: 16,
-    fontSize: 13,
+    fontSize: 14,
   },
 
   footer: {
