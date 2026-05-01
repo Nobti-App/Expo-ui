@@ -137,7 +137,7 @@ export function EstabCreateQueueScreen() {
     } finally {
       setSaving(false);
     }
-  }, [editingQueueId, establishmentId, maxTickets, name, prefix, resetForm]);
+  }, [avgWaitMinutes, editingQueueId, establishmentId, maxTickets, name, prefix, resetForm]);
 
   const openShowboardLink = useCallback(async (queueId: string) => {
     const showboardUrl = `http://www.nobtiapp.ma/showboard/${queueId}`;
@@ -241,7 +241,9 @@ export function EstabCreateQueueScreen() {
                     setName(queue.name);
                     setPrefix(queue.prefix || '');
                       setMaxTickets(queue.max_tickets ? String(queue.max_tickets) : '');
-                      setAvgWaitMinutes(queue.avg_wait_minutes ? String(queue.avg_wait_minutes) : '');
+                      setAvgWaitMinutes(queue.avg_wait_minutes !== null && queue.avg_wait_minutes !== undefined
+                        ? String(queue.avg_wait_minutes)
+                        : '');
                     setVisibleQrQueueId(null);
                   }}
                 />
