@@ -237,8 +237,8 @@ export function JoinQueueScreen() {
               <Text style={[styles.chipText, { color: chip.text }]}>{chip.label}</Text>
             </View>
 
-            {!isCalled && (
-              <View style={styles.nameCard}>
+            {(!isCalled || !ticket.holderName) && ( 
+              <View style={styles.nameCard} >
                 <Text style={styles.nameLabel}>Nom affiché</Text>
                 <TextInput
                   value={holderName}
@@ -249,7 +249,7 @@ export function JoinQueueScreen() {
                   autoCorrect={false}
                 />
                 <PrimaryButton
-                  label={savingName ? 'Mise à jour...' : 'Mettre à jour le nom'}
+                  label={savingName ? 'Mise à jour...' : 'Confirmer votre nom'}
                   variant="outline"
                   onPress={onSaveName}
                   disabled={savingName || !ticket || holderName.trim() === (ticket.holderName ?? '').trim()}
