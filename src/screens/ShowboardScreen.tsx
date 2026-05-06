@@ -51,7 +51,7 @@ export function ShowboardScreen() {
   const queueId = useMemo(() => (typeof queueid === 'string' ? queueid : ''), [queueid]);
   const domainLabel = formatDomainLabel(appConfig.domain || '');
   const { width, height } = useWindowDimensions();
-  const uiScale = useMemo(() => clamp(Math.min(width / 1280, height / 720), 0.7, 1.25), [width, height]);
+  const uiScale = useMemo(() => clamp(Math.min(width / 1920, height / 1080), 0.7, 1.25), [width, height]);
 
   const [establishmentName, setEstablishmentName] = useState('');
   const [queueName, setQueueName] = useState('');

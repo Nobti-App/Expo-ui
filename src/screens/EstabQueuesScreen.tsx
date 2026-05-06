@@ -209,6 +209,20 @@ export function EstabQueuesScreen() {
   );
 
   const hasCurrent = current.length > 0;
+  const treatedTodayCount = useMemo(() => {
+    if (!establishmentId) return 0;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    return Object.values(ticketsByQueueId)
+      .flat()
+      .filter((ticket) => {
+        if (ticket.status !== 'completed' || !ticket.created_at) return false;
+        const createdAt = new Date(ticket.created_at);
+        if (Number.isNaN(createdAt.getTime())) return false;
+        return createdAt >= startOfDay;
+      }).length;
+  }, [establishmentId, ticketsByQueueId]);
 
   const updateTicketStatus = useCallback(
     async (ticketId: string, status: Exclude<TicketStatus, null | 'waiting'>) => {
@@ -382,7 +396,7 @@ export function EstabQueuesScreen() {
         <Mini v={String(current.length)} l="En cours" color={colors.green} />
         {/* <Mini v={String(establishmentId ? queues.length : 0)} l="Files" color={colors.blueDark} /> */}
         {/* /// Mini for the number of treated tickets */}
-        <Mini v={String(establishmentId ? Object.values(ticketsByQueueId).flat().filter((t) => t.status === 'completed').length : 0)} l="Traités" color={colors.blueDark} />
+        <Mini v={String(treatedTodayCount)} l="Traités" color={colors.blueDark} />
       </View>
 
       <View style={styles.quickRow}>
