@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, PixelRatio, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { supabase } from '@/src/lib/supabase';
 import { appConfig } from '@/src/lib/appConfig';
@@ -46,12 +46,20 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
 
+const BASE_WIDTH = 1920;
+const BASE_HEIGHT = 1080;
+
 export function ShowboardScreen() {
   const { queueid } = useLocalSearchParams<{ queueid?: string }>();
   const queueId = useMemo(() => (typeof queueid === 'string' ? queueid : ''), [queueid]);
   const domainLabel = formatDomainLabel(appConfig.domain || '');
   const { width, height } = useWindowDimensions();
-  const uiScale = useMemo(() => clamp(Math.min(width / 1920, height / 1080), 0.6, 1), [width, height]);
+  const deviceScale = useMemo(() => (Platform.OS === 'web' ? PixelRatio.get() || 1 : 1), []);
+  const uiScale = useMemo(() => {
+    const widthScale = (width * deviceScale) / BASE_WIDTH;
+    const heightScale = (height * deviceScale) / BASE_HEIGHT;
+    return clamp(Math.min(widthScale, heightScale), 0.6, 2.5);
+  }, [width, height, deviceScale]);
 
   const [establishmentName, setEstablishmentName] = useState('');
   const [queueName, setQueueName] = useState('');
