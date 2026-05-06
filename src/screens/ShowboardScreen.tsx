@@ -51,7 +51,7 @@ export function ShowboardScreen() {
   const queueId = useMemo(() => (typeof queueid === 'string' ? queueid : ''), [queueid]);
   const domainLabel = formatDomainLabel(appConfig.domain || '');
   const { width, height } = useWindowDimensions();
-  const uiScale = useMemo(() => clamp(Math.min(width / 1920, height / 1080), 0.7, 1.25), [width, height]);
+  const uiScale = useMemo(() => clamp(Math.min(width / 1920, height / 1080), 0.6, 1), [width, height]);
 
   const [establishmentName, setEstablishmentName] = useState('');
   const [queueName, setQueueName] = useState('');
@@ -243,7 +243,7 @@ export function ShowboardScreen() {
     if (len > 14) return clamp(Math.round(46 * uiScale), 34, base);
     return base;
   }, [ticketName, uiScale]);
-  const ticketNumberSize = clamp(Math.round(126 * uiScale), 86, 150);
+  const ticketNumberSize = clamp(Math.round(126 * uiScale), 80, 280);
   const ticketNumberLine = Math.round(ticketNumberSize * 0.98);
   const nameLine = Math.round(ticketNameSize * 1.08);
   const paddingX = Math.round(28 * uiScale);
