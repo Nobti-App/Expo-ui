@@ -3,9 +3,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Animated, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { supabase } from '@/src/lib/supabase';
+import { appConfig } from '@/src/lib/appConfig';
 import { ensureAnonymousSession } from '../lib/api/joinQueue';
 
 type TicketStatus = 'waiting' | 'calling' | 'completed' | 'cancelled' | 'no_show' | null;
+function formatDomainLabel(domain: string) {
+  return domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+}
 
 type TicketRow = {
   id: string;
@@ -41,6 +45,7 @@ function getClockTime() {
 export function ShowboardScreen() {
   const { queueid } = useLocalSearchParams<{ queueid?: string }>();
   const queueId = useMemo(() => (typeof queueid === 'string' ? queueid : ''), [queueid]);
+  const domainLabel = formatDomainLabel(appConfig.domain || '');
 
   const [establishmentName, setEstablishmentName] = useState('');
   const [queueName, setQueueName] = useState('');
@@ -356,7 +361,7 @@ export function ShowboardScreen() {
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.footerMsg}>Merci de votre patience</Text>
-        <Text style={styles.footerPowered}>nobtiapp.ma</Text>
+        <Text style={styles.footerPowered}>{domainLabel}</Text>
       </View>
     </View>
   );

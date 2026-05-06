@@ -34,6 +34,7 @@ const config: ExpoConfig = {
       process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
     wsBaseUrl: process.env.EXPO_PUBLIC_WS_BASE_URL,
+    domain: process.env.EXPO_PUBLIC_DOMAIN,
   },
   plugins: [
     'expo-router',

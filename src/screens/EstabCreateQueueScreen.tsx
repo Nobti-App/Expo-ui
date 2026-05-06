@@ -6,6 +6,7 @@ import { AppHeader } from '@/src/components/AppHeader';
 import { AppShell } from '@/src/components/AppShell';
 import { PrimaryButton } from '@/src/components/PrimaryButton';
 import { createQueue, listQueues, QueueEntity, updateQueue } from '@/src/lib/api/queues';
+import { appConfig } from '@/src/lib/appConfig';
 import { supabase } from '@/src/lib/supabase';
 import { colors, radius } from '@/src/theme/colors';
 
@@ -24,8 +25,16 @@ function parseAvgWait(value: string) {
   return Math.max(0, parsed);
 }
 
+function normalizeDomain(domain: string) {
+  const trimmed = domain.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  return `https://${trimmed}`;
+}
+
 export function EstabCreateQueueScreen() {
   const router = useRouter();
+  const baseUrl = normalizeDomain(appConfig.domain);
   const [queues, setQueues] = useState<QueueEntity[]>([]);
   const [establishmentId, setEstablishmentId] = useState('');
   const [name, setName] = useState('');
@@ -46,6 +55,20 @@ export function EstabCreateQueueScreen() {
     setMaxTickets('');
     setAvgWaitMinutes('');
   }, []);
+
+  const navigateToQueueLink = useCallback((queueId: string) => {
+    if (!baseUrl) {
+      setError('Domain manquant. Vérifiez EXPO_PUBLIC_DOMAIN.');
+      return;
+    }
+
+    const queueUrl = `${baseUrl}/establishment/queues?queue_id=${queueId}`;
+    
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(queueUrl, '_blank', 'noopener,noreferrer');
+    }
+  }, [baseUrl]);
+
 
   const loadQueues = useCallback(async () => {
     setError('');
@@ -140,7 +163,12 @@ export function EstabCreateQueueScreen() {
   }, [avgWaitMinutes, editingQueueId, establishmentId, maxTickets, name, prefix, resetForm]);
 
   const openShowboardLink = useCallback(async (queueId: string) => {
-    const showboardUrl = `http://www.nobtiapp.ma/showboard/${queueId}`;
+    if (!baseUrl) {
+      setError('Domain manquant. Vérifiez EXPO_PUBLIC_DOMAIN.');
+      return;
+    }
+
+    const showboardUrl = `${baseUrl}/showboard/${queueId}`;
 
     try {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -152,7 +180,7 @@ export function EstabCreateQueueScreen() {
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : 'Impossible d’ouvrir le showboard.');
     }
-  }, []);
+  }, [baseUrl]);
 
   const formTitle = editingQueueId ? 'Modifier la file' : 'Créer une file';
   const submitLabel = editingQueueId ? 'Enregistrer les modifications' : 'Créer la file';
@@ -218,7 +246,7 @@ export function EstabCreateQueueScreen() {
         </View>
       ) : (
         queues.map((queue) => {
-          const joinUrl = `http://www.nobtiapp.ma/join/${queue.id}`;
+          const joinUrl = baseUrl ? `${baseUrl}/join/${queue.id}` : '';
           const qrVisible = visibleQrQueueId === queue.id;
           const maxTicketsLabel = queue.max_tickets ?? '—';
 
@@ -253,13 +281,21 @@ export function EstabCreateQueueScreen() {
                   onPress={() => setVisibleQrQueueId((prev) => (prev === queue.id ? null : queue.id))}
                 />
               </View>
-
+                
+              <View style={styles.queueActions}>
               <PrimaryButton
                 label="Ouvrir showboard"
                 variant="outline"
-                style={styles.showboardAction}
+                style={{ flex: 1 }}
                 onPress={() => void openShowboardLink(queue.id)}
               />
+              <PrimaryButton
+                label="Naviger vers la file"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => void navigateToQueueLink(queue.id)}
+              />
+              </View>
 
               {qrVisible && (
                 <View style={styles.qrWrap}>

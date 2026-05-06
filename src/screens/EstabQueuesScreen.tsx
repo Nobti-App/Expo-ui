@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Modal, Pressable, StyleSheet, Text, TextInput, View, Alert, Platform } from 'react-native';
 
@@ -44,6 +44,7 @@ function formatCreatedAt(value: string | null) {
 
 export function EstabQueuesScreen() {
   const router = useRouter();
+  const { queue_id: queueIdParam } = useLocalSearchParams<{ queue_id?: string | string[] }>();
   const [establishmentId, setEstablishmentId] = useState('');
   const [queues, setQueues] = useState<QueueRow[]>([]);
   const [selectedQueueId, setSelectedQueueId] = useState('');
@@ -56,6 +57,11 @@ export function EstabQueuesScreen() {
   const [animatedTicketId, setAnimatedTicketId] = useState('');
   const [showManualTicketModal, setShowManualTicketModal] = useState(false);
   const [manualTicketName, setManualTicketName] = useState('');
+
+  const routeQueueId = useMemo(() => {
+    if (Array.isArray(queueIdParam)) return queueIdParam[0] ?? '';
+    return queueIdParam ?? '';
+  }, [queueIdParam]);
 
   const fetchSnapshot = useCallback(async () => {
     try {
@@ -99,6 +105,7 @@ export function EstabQueuesScreen() {
       const normalizedQueues = queueRows ?? [];
       setQueues(normalizedQueues);
       setSelectedQueueId((prev) => {
+        if (routeQueueId && normalizedQueues.some((queue) => queue.id === routeQueueId)) return routeQueueId;
         if (prev && normalizedQueues.some((queue) => queue.id === prev)) return prev;
         return normalizedQueues[0]?.id ?? '';
       });
@@ -151,7 +158,7 @@ export function EstabQueuesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [pulse]);
+  }, [pulse, routeQueueId]);
 
   useEffect(() => {
     let active = true;
@@ -181,6 +188,13 @@ export function EstabQueuesScreen() {
       if (channel) supabase.removeChannel(channel);
     };
   }, [fetchSnapshot]);
+
+  useEffect(() => {
+    if (!routeQueueId) return;
+    if (queues.some((queue) => queue.id === routeQueueId)) {
+      setSelectedQueueId(routeQueueId);
+    }
+  }, [queues, routeQueueId]);
 
   const selectedQueueTickets = useMemo(() => ticketsByQueueId[selectedQueueId] ?? [], [ticketsByQueueId, selectedQueueId]);
 

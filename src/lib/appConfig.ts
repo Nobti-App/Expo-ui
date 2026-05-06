@@ -5,6 +5,7 @@ type ExpoExtra = {
   supabasePublishableKey?: string;
   apiBaseUrl?: string;
   wsBaseUrl?: string;
+  domain?: string;
 };
 
 const fromExpoConfig = (Constants.expoConfig?.extra ?? {}) as ExpoExtra;
@@ -22,4 +23,5 @@ export const appConfig = {
   supabasePublishableKey: extra.supabasePublishableKey ?? '',
   apiBaseUrl: extra.apiBaseUrl ?? '',
   wsBaseUrl: extra.wsBaseUrl ?? '',
+  domain: extra.domain ?? '',
 };
