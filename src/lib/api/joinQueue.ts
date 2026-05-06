@@ -9,6 +9,7 @@ type TicketRow = {
   display_number: string | null;
   status: DbTicketStatus;
   holder_name: string | null;
+  created_at: string | null;
 };
 
 type QueueRow = {
@@ -31,9 +32,11 @@ export type JoinTicket = {
   queueName: string;
   holderName: string | null;
   beforeCount: number;
+  avgServiceMinutes: number | null;
   estimatedMinutes: number | null;
   progressPercent: number;
   status: 'waiting' | 'calling' | 'done' | 'cancelled' | 'no_show';
+  ticketCreatedAt: string | null;
 };
 
 export type QueueProgressEvent = Partial<JoinTicket>;
@@ -91,7 +94,7 @@ export async function ensureAnonymousSession() {
 async function findLatestActiveUserTicketInQueue(queueId: string, userId: string) {
   const { data, error } = await supabase
     .from('tickets')
-    .select('id, queue_id, ticket_number, display_number, status, holder_name')
+    .select('id, queue_id, ticket_number, display_number, status, holder_name, created_at')
     .eq('queue_id', queueId)
     .eq('user_id', userId)
     .in('status', ['waiting', 'calling'])
@@ -182,16 +185,18 @@ async function buildJoinTicket(ticket: TicketRow): Promise<JoinTicket> {
     queueName: queue.name,
     holderName: ticket.holder_name,
     beforeCount: normalizedBeforeCount,
+    avgServiceMinutes,
     estimatedMinutes: avgServiceMinutes != null ? avgServiceMinutes * normalizedBeforeCount : null,
     progressPercent: computeProgress(normalizedStatus, normalizedBeforeCount, totalActive ?? 0),
     status: normalizedStatus,
+    ticketCreatedAt: ticket.created_at,
   };
 }
 
 export async function fetchJoinTicketSnapshot(ticketId: string) {
   const { data: ticket, error: ticketError } = await supabase
     .from('tickets')
-    .select('id, queue_id, ticket_number, display_number, status, holder_name')
+    .select('id, queue_id, ticket_number, display_number, status, holder_name, created_at')
     .eq('id', ticketId)
     .maybeSingle<TicketRow>();
 

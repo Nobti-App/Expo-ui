@@ -21,6 +21,7 @@ EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 EXPO_PUBLIC_API_BASE_URL=https://api.your-backend.com
 EXPO_PUBLIC_WS_BASE_URL=wss://api.your-backend.com/ws
+EXPO_PUBLIC_DOMAIN=domain.com
 ```
 
 Expo loads these values through [app.config.ts](app.config.ts) using `dotenv/config`. Keep secret/service keys on backend only.

@@ -290,7 +290,7 @@ export function EstabCreateQueueScreen() {
                 onPress={() => void openShowboardLink(queue.id)}
               />
               <PrimaryButton
-                label="Naviger vers la file"
+                label="naviguer vers la file"
                 variant="outline"
                 style={{ flex: 1 }}
                 onPress={() => void navigateToQueueLink(queue.id)}

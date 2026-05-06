@@ -38,6 +38,28 @@ function splitTicketDisplay(displayNumber: string) {
   return { prefix, number };
 }
 
+function formatRemainingTime(minutes: number | null) {
+  if (minutes == null || !Number.isFinite(minutes)) return 'Temps indisponible';
+  const totalMinutes = Math.max(0, Math.ceil(minutes));
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  return `${hours} h ${mins} min`;
+}
+
+function computeRemainingMinutes(ticket: JoinTicket | null, nowMs: number) {
+  if (!ticket) return null;
+  if (ticket.status === 'calling' || ticket.status === 'done' || ticket.status === 'cancelled' || ticket.status === 'no_show') {
+    return 0;
+  }
+  if (ticket.avgServiceMinutes == null || !ticket.ticketCreatedAt) return null;
+  const startMs = new Date(ticket.ticketCreatedAt).getTime();
+  if (!Number.isFinite(startMs)) return null;
+  const elapsedMinutes = Math.max(0, (nowMs - startMs) / 60000);
+  const ownRemaining = Math.max(0, ticket.avgServiceMinutes - elapsedMinutes);
+  return ownRemaining + ticket.beforeCount * ticket.avgServiceMinutes;
+}
+
 export function JoinQueueScreen() {
   const { queue_id } = useLocalSearchParams<{ queue_id?: string }>();
   const queueId = useMemo(() => (typeof queue_id === 'string' ? queue_id : ''), [queue_id]);
@@ -51,6 +73,7 @@ export function JoinQueueScreen() {
   const [holderName, setHolderName] = useState('');
   const [treatedMessage, setTreatedMessage] = useState('');
   const [connectionState, setConnectionState] = useState<ConnectionState>('connected');
+  const [remainingMinutes, setRemainingMinutes] = useState<number | null>(null);
 
   const stopSocketRef = useRef<(() => void) | null>(null);
   const initRunningRef = useRef(false);
@@ -155,7 +178,22 @@ export function JoinQueueScreen() {
     };
   }, [queueId, setAuthSession]);
 
-  const displayEstimatedMinutes = ticket?.estimatedMinutes != null ? `${ticket.estimatedMinutes} min` : 'Temps indisponible';
+  useEffect(() => {
+    if (!ticket) {
+      setRemainingMinutes(null);
+      return;
+    }
+
+    const updateRemaining = () => {
+      setRemainingMinutes(computeRemainingMinutes(ticket, Date.now()));
+    };
+
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [ticket]);
+
+  const displayEstimatedMinutes = formatRemainingTime(remainingMinutes);
 
   const onCancel = async () => {
     if (!ticket || cancelling) return;
@@ -183,7 +221,7 @@ export function JoinQueueScreen() {
   const pct = Math.min(Math.max(ticket?.progressPercent ?? 0, 0), 100);
   const displayParts = ticket ? splitTicketDisplay(ticket.displayNumber) : { prefix: '--', number: '--' };
   const isCalled = ticket?.status === 'calling';
-  const shouldShowReadyNow = !isCalled && (ticket?.beforeCount ?? -1) === 0 && (ticket?.estimatedMinutes ?? -1) === 0;
+  const shouldShowReadyNow = !isCalled && (ticket?.beforeCount ?? -1) === 0 && (remainingMinutes ?? -1) === 0;
 
   const onSaveName = async () => {
     if (!ticket || savingName) return;

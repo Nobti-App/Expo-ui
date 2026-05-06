@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Animated, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { supabase } from '@/src/lib/supabase';
 import { appConfig } from '@/src/lib/appConfig';
@@ -42,10 +42,16 @@ function getClockTime() {
   return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(value, max));
+}
+
 export function ShowboardScreen() {
   const { queueid } = useLocalSearchParams<{ queueid?: string }>();
   const queueId = useMemo(() => (typeof queueid === 'string' ? queueid : ''), [queueid]);
   const domainLabel = formatDomainLabel(appConfig.domain || '');
+  const { width, height } = useWindowDimensions();
+  const uiScale = useMemo(() => clamp(Math.min(width / 1280, height / 720), 0.7, 1.25), [width, height]);
 
   const [establishmentName, setEstablishmentName] = useState('');
   const [queueName, setQueueName] = useState('');
@@ -59,9 +65,39 @@ export function ShowboardScreen() {
   const [avgWaitMinutes, setAvgWaitMinutes] = useState<number | null>(null);
   const [iptvLink, setIptvLink] = useState<string | null>(null);
   const pulse = React.useRef(new Animated.Value(1)).current;
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastCalledTicketIdRef = useRef('');
+  const hasLoadedOnceRef = useRef(false);
   const ReactPlayer = useMemo(() => {
     if (Platform.OS !== 'web') return null;
     return (require('react-player') as { default: React.ComponentType<any> }).default;
+  }, []);
+
+  const playCallSound = useCallback(async () => {
+    if (Platform.OS !== 'web') return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    try {
+      audio.currentTime = 0;
+      await audio.play();
+    } catch {
+      // ignore audio failures (e.g. autoplay restrictions)
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const asset = require('../../assets/sounds/calling.mp3');
+    const assetUri = typeof asset === 'string' ? asset : asset?.uri ?? '';
+    if (!assetUri) return;
+
+    const audio = new Audio(assetUri);
+    audio.preload = 'auto';
+    audioRef.current = audio;
+
+    return () => {
+      audioRef.current = null;
+    };
   }, []);
 
   const fetchSnapshot = useCallback(async () => {
@@ -127,6 +163,17 @@ export function ShowboardScreen() {
       const allTickets = ticketsData ?? [];
       const calling = allTickets.filter((t) => t.status === 'calling');
       const waiting = allTickets.filter((t) => t.status === 'waiting');
+      const callingId = calling[0]?.id ?? '';
+
+      if (!hasLoadedOnceRef.current) {
+        hasLoadedOnceRef.current = true;
+        lastCalledTicketIdRef.current = callingId;
+      } else if (callingId && callingId !== lastCalledTicketIdRef.current) {
+        lastCalledTicketIdRef.current = callingId;
+        await playCallSound();
+      } else if (!callingId) {
+        lastCalledTicketIdRef.current = '';
+      }
 
       setCurrentTicket(calling.length > 0 ? calling[0] : null);
       setUpcomingTickets(waiting);
@@ -144,7 +191,7 @@ export function ShowboardScreen() {
     } finally {
       setLoading(false);
     }
-  }, [queueId, pulse]);
+  }, [queueId, pulse, playCallSound]);
 
   useEffect(() => {
     let active = true;
@@ -185,99 +232,138 @@ export function ShowboardScreen() {
 
   const waitingCount = upcomingTickets.length;
   const showIptvPlayer = Platform.OS === 'web' && !!iptvLink;
+  const ticketName = currentTicket?.holder_name || '';
+  const ticketNameWords = useMemo(() => ticketName.trim().split(/\s+/).filter(Boolean), [ticketName]);
+  const allowTwoLineName = ticketNameWords.length >= 2;
+  const ticketNameSize = useMemo(() => {
+    const len = ticketName.trim().length;
+    const base = Math.round(56 * uiScale);
+    if (len > 26) return clamp(Math.round(34 * uiScale), 26, base);
+    if (len > 20) return clamp(Math.round(40 * uiScale), 30, base);
+    if (len > 14) return clamp(Math.round(46 * uiScale), 34, base);
+    return base;
+  }, [ticketName, uiScale]);
+  const ticketNumberSize = clamp(Math.round(126 * uiScale), 86, 150);
+  const ticketNumberLine = Math.round(ticketNumberSize * 0.98);
+  const nameLine = Math.round(ticketNameSize * 1.08);
+  const paddingX = Math.round(28 * uiScale);
+  const paddingY = Math.round(20 * uiScale);
+  const gridGap = Math.round(18 * uiScale);
 
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingHorizontal: Math.round(24 * uiScale), paddingVertical: Math.round(12 * uiScale) }]}
+      >
         <View style={styles.brand}>
-          <View style={styles.brandLogo}>
-            <Text style={styles.brandLogoText}>N</Text>
+          <View style={[styles.brandLogo, { width: Math.round(40 * uiScale), height: Math.round(40 * uiScale) }]}
+          >
+            <Text style={[styles.brandLogoText, { fontSize: Math.round(20 * uiScale) }]}>N</Text>
           </View>
           <View>
-            <Text style={styles.brandName}>{establishmentName || 'Établissement'}</Text>
-            <Text style={styles.brandSub}>File d'attente</Text>
+            <Text style={[styles.brandName, { fontSize: Math.round(16 * uiScale) }]}>{establishmentName || 'Établissement'}</Text>
+            <Text style={[styles.brandSub, { fontSize: Math.round(11 * uiScale) }]}>File d'attente</Text>
           </View>
         </View>
-        <Text style={styles.headerTime}>{clock}</Text>
+        <Text style={[styles.headerTime, { fontSize: Math.round(15 * uiScale) }]}>{clock}</Text>
       </View>
 
       <View style={styles.body}>
         {showIptvPlayer ? (
-          <View style={styles.dualLayout}>
+          <View style={[styles.dualLayout, { paddingHorizontal: paddingX, paddingVertical: paddingY }]}
+          >
             <View style={styles.playerColumn}>
-              <View style={styles.playerFrame}>
+              <View style={[styles.playerFrame, { minHeight: Math.round(300 * uiScale) }]}>
                 {ReactPlayer ? (
                   <ReactPlayer url={iptvLink as string} muted controls playing width="100%" height="100%" />
                 ) : (
                   <Text style={styles.emptyText}>Lecteur indisponible</Text>
                 )}
               </View>
-              <Text style={styles.playerLabel}>Live IPTV</Text>
+              {/* <Text style={[styles.playerLabel, { fontSize: Math.round(11 * uiScale) }]}>Live IPTV</Text> */}
             </View>
-            <ScrollView
-              style={styles.rightColumn}
-              contentContainerStyle={styles.mainGrid}
-              showsVerticalScrollIndicator={false}
-            >
+            <View style={styles.rightColumn}>
+              <View style={[styles.mainGrid, { paddingHorizontal: paddingX, paddingVertical: paddingY, gap: gridGap, flex: 1, justifyContent: 'space-between' }]}
+              >
               {/* Current ticket card */}
-              <View style={styles.currentCard}>
-                <Text style={styles.sectionLabel}>
+                <View style={[styles.currentCard, { paddingVertical: Math.round(26 * uiScale), paddingHorizontal: Math.round(28 * uiScale) }]}
+                >
+                  <Text style={[styles.sectionLabel, { fontSize: Math.round(11 * uiScale), marginBottom: Math.round(12 * uiScale) }]}
+                  >
                   <Text style={styles.pulseDot}>●</Text>
                   {' '}Numéro en cours
                 </Text>
-                <View style={styles.ticketDisplay}>
-                  <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulse }] }]}>
+                  <View style={[styles.ticketDisplay, { gap: Math.round(24 * uiScale), minHeight: Math.round(120 * uiScale) }]}
+                  >
+                    <Animated.Text style={[styles.ticketNumber, { fontSize: ticketNumberSize, lineHeight: ticketNumberLine, minWidth: Math.round(160 * uiScale), transform: [{ scale: pulse }] }]}
+                    >
                     {currentTicket ? normalizeDisplayNumber(currentTicket) : '--'}
                   </Animated.Text>
-                  <View style={styles.ticketDivider} />
-                  <View style={styles.ticketDetails}>
-                    <Text style={styles.ticketNowLabel}>Appelé maintenant</Text>
-                    <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
-                    <View style={styles.ticketMeta}>
+                    <View style={[styles.ticketDivider, { height: Math.round(90 * uiScale) }]}
+                    />
+                    <View style={styles.ticketDetails}>
+                      <Text style={[styles.ticketNowLabel, { fontSize: Math.round(12 * uiScale), marginBottom: Math.round(6 * uiScale) }]}
+                      >
+                        Appelé maintenant
+                      </Text>
+                      <Text
+                        style={[styles.ticketName, { fontSize: ticketNameSize, lineHeight: nameLine }]}
+                        numberOfLines={allowTwoLineName ? 2 : 1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={allowTwoLineName ? 0.7 : 0.5}
+                      >
+                        {ticketName}
+                      </Text>
+                      <View style={[styles.ticketMeta, { marginTop: Math.round(10 * uiScale), gap: Math.round(10 * uiScale) }]}
+                      >
                       <View style={styles.counterBadge}>
-                        <Text style={styles.counterBadgeText}>{queueName || 'File'}</Text>
+                        <Text style={[styles.counterBadgeText, { fontSize: Math.round(12 * uiScale) }]}>{queueName || 'File'}</Text>
                       </View>
-                      <View style={styles.timeBadge}>
-                        <Text style={styles.timeBadgeText}>{clock}</Text>
-                      </View>
+                      {/* <View style={styles.timeBadge}>
+                        <Text style={[styles.timeBadgeText, { fontSize: Math.round(12 * uiScale) }]}>{clock}</Text>
+                      </View> */}
                     </View>
                   </View>
                 </View>
               </View>
 
               {/* Stats row */}
-              <View style={styles.statsRow}>
-                <View style={[styles.statCard, styles.statHighlight]}>
-                  <Text style={styles.statValue}>{waitingCount}</Text>
-                  <Text style={styles.statLabel}>En attente</Text>
+                <View style={[styles.statsRow, { gap: Math.round(12 * uiScale) }]}>
+                  <View style={[styles.statCard, styles.statHighlight, { paddingHorizontal: Math.round(16 * uiScale), paddingVertical: Math.round(12 * uiScale) }]}>
+                    <Text style={[styles.statValue, { fontSize: Math.round(32 * uiScale) }]}>{waitingCount}</Text>
+                    <Text style={[styles.statLabel, { fontSize: Math.round(11 * uiScale) }]}>En attente</Text>
                 </View>
-                <View style={styles.statCard}>
+                {/* <View style={styles.statCard}>
                   <Text style={styles.statValue}>{servedCount}</Text>
                   <Text style={styles.statLabel}>Servis auj.</Text>
-                </View>
-                <View style={styles.statCard}>
-                  <Text style={styles.statValue}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
-                  <Text style={styles.statLabel}>Temps moyen par ticket</Text>
-                </View>
+                </View> */}
+                  <View style={[styles.statCard, { paddingHorizontal: Math.round(16 * uiScale), paddingVertical: Math.round(12 * uiScale) }]}>
+                    <Text style={[styles.statValue, { fontSize: Math.round(32 * uiScale) }]}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
+                    <Text style={[styles.statLabel, { fontSize: Math.round(11 * uiScale) }]}>Temps moyen par ticket</Text>
+                  </View>
               </View>
 
               {/* Queue list */}
-              <View style={styles.queueSection}>
-                <Text style={styles.sectionLabel}>À appeler ensuite</Text>
-                <View style={styles.queueList}>
+                <View style={[styles.queueSection, { paddingHorizontal: Math.round(20 * uiScale), paddingVertical: Math.round(18 * uiScale), flex: 1, minHeight: 0 }]}
+                >
+                  <Text style={[styles.sectionLabel, { fontSize: Math.round(11 * uiScale), marginBottom: Math.round(10 * uiScale) }]}
+                  >
+                    À appeler ensuite
+                  </Text>
+                  <View style={[styles.queueList , { overflow: 'hidden', flex: 1 }]}
+                  >
                   {loading ? (
                     <Text style={styles.emptyText}>Chargement...</Text>
                   ) : upcomingTickets.length === 0 ? (
                     <Text style={styles.emptyText}>Aucun numéro en attente</Text>
                   ) : (
-                    upcomingTickets.slice(0, 4).map((ticket, idx) => (
-                      <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
-                        <Text style={styles.queuePos}>{normalizeDisplayNumber(ticket)}</Text>
-                        <Text style={styles.queueName}>{ticket.holder_name || ''}</Text>
+                    upcomingTickets.slice(0, 5).map((ticket, idx) => (
+                      <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext, { paddingVertical: Math.round(12 * uiScale), paddingHorizontal: Math.round(14 * uiScale) }]}>
+                        <Text style={[styles.queuePos, { fontSize: Math.round(22 * uiScale), width: Math.round(48 * uiScale) }]}>{normalizeDisplayNumber(ticket)}</Text>
+                        <Text style={[styles.queueName, { fontSize: Math.round(16 * uiScale) }]}>{ticket.holder_name || ''}</Text>
                         {idx === 0 && (
                           <View style={styles.nextChip}>
-                            <Text style={styles.nextChipText}>Suivant</Text>
+                            <Text style={[styles.nextChipText, { fontSize: Math.round(10 * uiScale) }]}>Suivant</Text>
                           </View>
                         )}
                       </View>
@@ -285,30 +371,46 @@ export function ShowboardScreen() {
                   )}
                 </View>
               </View>
-            </ScrollView>
+              </View>
+            </View>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.mainGrid} showsVerticalScrollIndicator={false}>
+          <View style={[styles.mainGrid, { paddingHorizontal: paddingX, paddingVertical: paddingY, gap: gridGap, flex: 1, justifyContent: 'space-between' }]}>
             {/* Current ticket card */}
-            <View style={styles.currentCard}>
-              <Text style={styles.sectionLabel}>
+            <View style={[styles.currentCard, { paddingVertical: Math.round(26 * uiScale), paddingHorizontal: Math.round(28 * uiScale) }]}
+            >
+              <Text style={[styles.sectionLabel, { fontSize: Math.round(11 * uiScale), marginBottom: Math.round(12 * uiScale) }]}
+              >
                 <Text style={styles.pulseDot}>●</Text>
                 {' '}Numéro en cours
               </Text>
-              <View style={styles.ticketDisplay}>
-                <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulse }] }]}>
+              <View style={[styles.ticketDisplay, { gap: Math.round(24 * uiScale), minHeight: Math.round(120 * uiScale) }]}
+              >
+                <Animated.Text style={[styles.ticketNumber, { fontSize: ticketNumberSize, lineHeight: ticketNumberLine, minWidth: Math.round(160 * uiScale), transform: [{ scale: pulse }] }]}
+                >
                   {currentTicket ? normalizeDisplayNumber(currentTicket) : '--'}
                 </Animated.Text>
-                <View style={styles.ticketDivider} />
+                <View style={[styles.ticketDivider, { height: Math.round(90 * uiScale) }]} />
                 <View style={styles.ticketDetails}>
-                  <Text style={styles.ticketNowLabel}>Appelé maintenant</Text>
-                  <Text style={styles.ticketName}>{currentTicket?.holder_name || 'En attente'}</Text>
-                  <View style={styles.ticketMeta}>
+                  <Text style={[styles.ticketNowLabel, { fontSize: Math.round(12 * uiScale), marginBottom: Math.round(6 * uiScale) }]}
+                  >
+                    Appelé maintenant
+                  </Text>
+                  <Text
+                    style={[styles.ticketName, { fontSize: ticketNameSize, lineHeight: nameLine }]}
+                    numberOfLines={allowTwoLineName ? 2 : 1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={allowTwoLineName ? 0.7 : 0.5}
+                  >
+                    {ticketName}
+                  </Text>
+                  <View style={[styles.ticketMeta, { marginTop: Math.round(10 * uiScale), gap: Math.round(10 * uiScale) }]}
+                  >
                     <View style={styles.counterBadge}>
-                      <Text style={styles.counterBadgeText}>{queueName || 'File'}</Text>
+                      <Text style={[styles.counterBadgeText, { fontSize: Math.round(12 * uiScale) }]}>{queueName || 'File'}</Text>
                     </View>
                     <View style={styles.timeBadge}>
-                      <Text style={styles.timeBadgeText}>{clock}</Text>
+                      <Text style={[styles.timeBadgeText, { fontSize: Math.round(12 * uiScale) }]}>{clock}</Text>
                     </View>
                   </View>
                 </View>
@@ -316,37 +418,42 @@ export function ShowboardScreen() {
             </View>
 
             {/* Stats row */}
-            <View style={styles.statsRow}>
-              <View style={[styles.statCard, styles.statHighlight]}>
-                <Text style={styles.statValue}>{waitingCount}</Text>
-                <Text style={styles.statLabel}>En attente</Text>
+            <View style={[styles.statsRow, { gap: Math.round(12 * uiScale) }]}>
+              <View style={[styles.statCard, styles.statHighlight, { paddingHorizontal: Math.round(16 * uiScale), paddingVertical: Math.round(12 * uiScale) }]}>
+                <Text style={[styles.statValue, { fontSize: Math.round(32 * uiScale) }]}>{waitingCount}</Text>
+                <Text style={[styles.statLabel, { fontSize: Math.round(11 * uiScale) }]}>En attente</Text>
               </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{servedCount}</Text>
-                <Text style={styles.statLabel}>Servis auj.</Text>
+              <View style={[styles.statCard, { paddingHorizontal: Math.round(16 * uiScale), paddingVertical: Math.round(12 * uiScale) }]}>
+                <Text style={[styles.statValue, { fontSize: Math.round(32 * uiScale) }]}>{servedCount}</Text>
+                <Text style={[styles.statLabel, { fontSize: Math.round(11 * uiScale) }]}>Servis auj.</Text>
               </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
-                <Text style={styles.statLabel}>Temps moyen par ticket</Text>
+              <View style={[styles.statCard, { paddingHorizontal: Math.round(16 * uiScale), paddingVertical: Math.round(12 * uiScale) }]}>
+                <Text style={[styles.statValue, { fontSize: Math.round(32 * uiScale) }]}>{avgWaitMinutes !== null ? `~${avgWaitMinutes} min` : '--'}</Text>
+                <Text style={[styles.statLabel, { fontSize: Math.round(11 * uiScale) }]}>Temps moyen par ticket</Text>
               </View>
             </View>
 
             {/* Queue list */}
-            <View style={styles.queueSection}>
-              <Text style={styles.sectionLabel}>À appeler ensuite</Text>
-              <View style={styles.queueList}>
+            <View style={[styles.queueSection, { paddingHorizontal: Math.round(20 * uiScale), paddingVertical: Math.round(18 * uiScale), flex: 1, minHeight: 0 }]}
+            >
+              <Text style={[styles.sectionLabel, { fontSize: Math.round(11 * uiScale), marginBottom: Math.round(10 * uiScale) }]}
+              >
+                À appeler ensuite
+              </Text>
+              <View style={[styles.queueList, { flex: 1, justifyContent: 'space-between', gap: Math.round(8 * uiScale) }]}
+              >
                 {loading ? (
                   <Text style={styles.emptyText}>Chargement...</Text>
                 ) : upcomingTickets.length === 0 ? (
                   <Text style={styles.emptyText}>Aucun numéro en attente</Text>
                 ) : (
                   upcomingTickets.slice(0, 4).map((ticket, idx) => (
-                    <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext]}>
-                      <Text style={styles.queuePos}>{normalizeDisplayNumber(ticket)}</Text>
-                      <Text style={styles.queueName}>{ticket.holder_name || ''}</Text>
+                    <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext, { paddingVertical: Math.round(10 * uiScale), paddingHorizontal: Math.round(14 * uiScale) }]}>
+                      <Text style={[styles.queuePos, { fontSize: Math.round(22 * uiScale), width: Math.round(48 * uiScale) }]}>{normalizeDisplayNumber(ticket)}</Text>
+                      <Text style={[styles.queueName, { fontSize: Math.round(16 * uiScale) }]}>{ticket.holder_name || ''}</Text>
                       {idx === 0 && (
                         <View style={styles.nextChip}>
-                          <Text style={styles.nextChipText}>Suivant</Text>
+                          <Text style={[styles.nextChipText, { fontSize: Math.round(10 * uiScale) }]}>Suivant</Text>
                         </View>
                       )}
                     </View>
@@ -354,14 +461,15 @@ export function ShowboardScreen() {
                 )}
               </View>
             </View>
-          </ScrollView>
+          </View>
         )}
       </View>
 
       {/* Footer */}
-      <View style={styles.footer}>
-        <Text style={styles.footerMsg}>Merci de votre patience</Text>
-        <Text style={styles.footerPowered}>{domainLabel}</Text>
+      <View style={[styles.footer, { paddingHorizontal: Math.round(24 * uiScale), paddingVertical: Math.round(8 * uiScale) }]}
+      >
+        <Text style={[styles.footerMsg, { fontSize: Math.round(11 * uiScale) }]}>Merci de votre patience</Text>
+        <Text style={[styles.footerPowered, { fontSize: Math.round(10 * uiScale) }]}>{domainLabel}</Text>
       </View>
     </View>
   );
