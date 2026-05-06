@@ -365,8 +365,8 @@ export function ShowboardScreen() {
                   ) : upcomingTickets.length === 0 ? (
                     <Text style={styles.emptyText}>Aucun numéro en attente</Text>
                   ) : (
-                    upcomingTickets.slice(0, 5).map((ticket, idx) => (
-                      <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext, { paddingVertical: Math.round(12 * uiScale), paddingHorizontal: Math.round(14 * uiScale) }]}>
+                    upcomingTickets.map((ticket, idx) => (
+                      <View key={ticket.id} style={[styles.queueItem, idx === 0 && styles.queueItemNext, { paddingVertical: Math.round(25 * uiScale), paddingHorizontal: Math.round(14 * uiScale) }]}>
                         <Text style={[styles.queuePos, { fontSize: Math.round(22 * uiScale), width: Math.round(48 * uiScale) }]}>{normalizeDisplayNumber(ticket)}</Text>
                         <Text style={[styles.queueName, { fontSize: Math.round(16 * uiScale) }]}>{ticket.holder_name || ''}</Text>
                         {idx === 0 && (
@@ -709,7 +709,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   queueList: {
-    gap: 8,
+    gap: 10,
     marginTop: 12,
   },
   queueItem: {
